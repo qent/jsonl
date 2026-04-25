@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">JSONL Viewer for Claude Code Session History</title>
+  <desc id="desc">Visualize JSONL logs with timeline navigation and tool/result breakdown.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b1324"/>
+      <stop offset="100%" stop-color="#0f766e"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect x="56" y="56" width="1088" height="518" rx="24" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.22)"/>
+  <text x="96" y="200" fill="#f8fbff" font-family="Manrope,Segoe UI,sans-serif" font-size="58" font-weight="700">JSONL Viewer</text>
+  <text x="96" y="262" fill="#dbeafe" font-family="JetBrains Mono,monospace" font-size="30">for Claude Code Session History</text>
+  <text x="96" y="334" fill="#e2e8f0" font-family="Manrope,Segoe UI,sans-serif" font-size="29">Inspect assistant, user, system, tool, and result entries</text>
+  <text x="96" y="384" fill="#e2e8f0" font-family="Manrope,Segoe UI,sans-serif" font-size="29">with fast timeline navigation and clean structured cards.</text>
+  <text x="96" y="500" fill="#99f6e4" font-family="JetBrains Mono,monospace" font-size="24">jsonl.qent.io</text>
+</svg>

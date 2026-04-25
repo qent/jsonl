@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JSONL Viewer for Claude Code Session History</title>
+  <meta name="description" content="Visualize Claude Code JSONL session history files in your browser. Parse timeline entries, inspect tool calls, review results, and navigate long agent conversations faster.">
+  <meta name="keywords" content="claude code jsonl viewer, claude code session history visualizer, jsonl log viewer, ai agent transcript viewer, tool call timeline">
+  <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
+  <meta name="application-name" content="JSONL Viewer">
+  <meta name="theme-color" content="#0f766e">
+  <link rel="canonical" href="https://jsonl.qent.io/">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="JSONL Viewer">
+  <meta property="og:title" content="JSONL Viewer for Claude Code Session History">
+  <meta property="og:description" content="Inspect Claude Code JSONL history with structured cards, timeline navigation, and tool/result breakdown.">
+  <meta property="og:url" content="https://jsonl.qent.io/">
+  <meta property="og:image" content="https://jsonl.qent.io/og-image.svg">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="JSONL Viewer for Claude Code Session History">
+  <meta name="twitter:description" content="Upload JSONL files and explore Claude Code agent sessions with clear visual navigation.">
+  <meta name="twitter:image" content="https://jsonl.qent.io/og-image.svg">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "JSONL Viewer",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "Any",
+    "url": "https://jsonl.qent.io/",
+    "description": "Browser-based visualizer for Claude Code JSONL session history files.",
+    "featureList": [
+      "JSONL session history visualization",
+      "Tool call and tool result timeline",
+      "Copy-ready structured panels",
+      "Light and dark theme"
+    ]
+  }
+  </script>
+
+  <link rel="stylesheet" href="assets/css/styles.css">
+  <script type="module" src="https://cdn.jsdelivr.net/gh/zerodevx/zero-md@2/dist/zero-md.min.js"></script>
+  <script type="module" src="assets/js/app.mjs"></script>
+</head>
+<body>
+  <main id="app" class="app idle">
+    <button
+      id="themeToggleBtn"
+      class="theme-btn floating-btn"
+      type="button"
+      aria-pressed="false"
+      aria-label="Switch to dark theme"
+    >☀</button>
+    <div id="navHighlightOverlay" class="nav-highlight-overlay" hidden>
+      <div id="navHighlightLeft" class="nav-highlight-segment"></div>
+      <div id="navHighlightRight" class="nav-highlight-segment"></div>
+    </div>
+    <button id="navFocusBackdrop" class="nav-focus-backdrop" type="button" aria-label="Collapse navigation focus mode" hidden></button>
+    <section class="layout-grid">
+      <section id="mainColumn" class="main-column">
+        <button id="clearBtn" class="clear-btn floating-btn" type="button" aria-label="Clear output" hidden>✕</button>
+        <header class="hero">
+          <h1 class="page-title">JSONL Viewer</h1>
+          <p class="page-subtitle">for Claude Code history</p>
+          <p class="seo-summary">
+            Fast visualizer for Claude Code JSONL session history logs: inspect assistant, user, system,
+            tool, and result blocks with timeline navigation.
+          </p>
+        </header>
+
+        <button id="dropzone" class="dropzone" type="button" aria-label="Upload JSONL files">
+          <span class="dropzone-kicker">Drag, drop, inspect</span>
+          <span class="dropzone-title">Drop files here</span>
+          <span class="dropzone-note">Or click to choose files from your device.</span>
+        </button>
+        <input id="fileInput" type="file" accept=".jsonl,application/json,text/plain" multiple hidden>
+
+        <p id="status" class="status"></p>
+        <section id="contentGrid" class="content-grid" hidden>
+          <section id="messagesColumn" class="messages-column">
+            <section id="output"></section>
+          </section>
+        </section>
+      </section>
+      <aside id="navColumn" class="nav-column">
+        <button
+          id="navFocusPip"
+          class="nav-focus-pip"
+          type="button"
+          aria-pressed="false"
+          aria-label="Expand navigation focus mode"
+          hidden
+        ><span id="navFocusPipIcon" class="nav-focus-pip-icon">◂</span></button>
+        <div id="navList" class="nav-list"></div>
+      </aside>
+    </section>
+    <div id="copyToast" class="copy-toast" role="status" aria-live="polite" aria-atomic="true"></div>
+  </main>
+</body>
+</html>
