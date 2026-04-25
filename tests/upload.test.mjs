@@ -306,6 +306,8 @@ test('clear button stays hidden until something is rendered', () => {
 
   assert.equal(api.dropzone.hidden, false);
   assert.equal(api.clearBtn.hidden, true);
+  assert.equal(api.collapseAllBtn.hidden, true);
+  assert.equal(api.expandAllBtn.hidden, true);
   assert.equal(api.collapseAllBtn.disabled, true);
   assert.equal(api.expandAllBtn.disabled, true);
   assert.equal(api.contentGridEl.hidden, true);
@@ -373,6 +375,8 @@ test('clear button appears after rendering and hides again after clear', async (
   assert.equal(api.dropzone.classList.contains('has-content'), true);
   assert.equal(api.dropzone.classList.contains('idle'), false);
   assert.equal(api.clearBtn.hidden, false);
+  assert.equal(api.collapseAllBtn.hidden, true);
+  assert.equal(api.expandAllBtn.hidden, true);
   assert.equal(api.collapseAllBtn.disabled, true);
   assert.equal(api.expandAllBtn.disabled, true);
   assert.equal(api.contentGridEl.hidden, false);
@@ -391,6 +395,8 @@ test('clear button appears after rendering and hides again after clear', async (
   assert.equal(api.dropzone.classList.contains('has-content'), false);
   assert.equal(api.dropzone.classList.contains('idle'), true);
   assert.equal(api.clearBtn.hidden, true);
+  assert.equal(api.collapseAllBtn.hidden, true);
+  assert.equal(api.expandAllBtn.hidden, true);
   assert.equal(api.collapseAllBtn.disabled, true);
   assert.equal(api.expandAllBtn.disabled, true);
   assert.equal(api.contentGridEl.hidden, true);
@@ -499,9 +505,35 @@ test('index page includes floating collapse and expand controls under GitHub but
   assert.match(html, /id="collapseAllBtn"/);
   assert.match(html, /class="history-toggle-btn collapse-history-btn floating-btn"/);
   assert.match(html, /aria-label="Collapse all history content blocks"/);
+  assert.match(html, /<span class="history-toggle-icon" aria-hidden="true">close_fullscreen<\/span>/);
   assert.match(html, /id="expandAllBtn"/);
   assert.match(html, /class="history-toggle-btn expand-history-btn floating-btn"/);
   assert.match(html, /aria-label="Expand all history content blocks"/);
+  assert.match(html, /<span class="history-toggle-icon" aria-hidden="true">open_in_full<\/span>/);
+});
+
+test('dropzone hides during rendering and stays hidden after successful render', async () => {
+  const api = createHarness();
+  let resolveFileText;
+  const fileTextPromise = new Promise((resolve) => {
+    resolveFileText = resolve;
+  });
+  const deferredFile = {
+    name: 'slow.jsonl',
+    size: 2,
+    async text() {
+      return fileTextPromise;
+    }
+  };
+  const handlePromise = api.handleFiles([deferredFile]);
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(api.dropzone.hidden, true);
+
+  resolveFileText('{"type":"assistant","timestamp":"2026-04-24T12:20:00Z","message":{"content":[{"type":"text","text":"done"}]}}');
+  await handlePromise;
+
+  assert.equal(api.dropzone.hidden, true);
 });
 
 test('collapse and expand controls toggle every history details panel', async () => {
@@ -532,6 +564,8 @@ test('collapse and expand controls toggle every history details panel', async ()
   const requestPanel = toolCard.children[1];
   const resultPanel = toolCard.children[2];
 
+  assert.equal(api.collapseAllBtn.hidden, false);
+  assert.equal(api.expandAllBtn.hidden, false);
   assert.equal(api.collapseAllBtn.disabled, false);
   assert.equal(api.expandAllBtn.disabled, false);
   assert.notEqual(requestPanel.open, true);

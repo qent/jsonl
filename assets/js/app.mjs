@@ -451,10 +451,12 @@ export function createJsonlViewerApp(deps = {}) {
       const canToggleHistory = hasRenderedContent && detailsNodes.length > 0;
 
       if (collapseAllBtn) {
+        collapseAllBtn.hidden = !canToggleHistory;
         collapseAllBtn.disabled = !canToggleHistory;
       }
 
       if (expandAllBtn) {
+        expandAllBtn.hidden = !canToggleHistory;
         expandAllBtn.disabled = !canToggleHistory;
       }
     }
@@ -484,7 +486,7 @@ export function createJsonlViewerApp(deps = {}) {
       syncHistoryToggleButtons(hasContent);
       clearBtn.hidden = !hasContent;
       contentGridEl.hidden = !hasContent;
-      dropzone.hidden = hasContent;
+      dropzone.hidden = isRendering || hasContent;
       dropzone.classList.remove("idle", "rendering", "has-content");
       appEl.classList.remove("idle");
 
