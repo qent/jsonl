@@ -381,7 +381,7 @@ export function createJsonlViewerApp(deps = {}) {
 
       let contentRightX = null;
 
-      if (dropzone && typeof dropzone.getBoundingClientRect === "function") {
+      if (dropzone && !dropzone.hidden && typeof dropzone.getBoundingClientRect === "function") {
         const dropzoneRect = dropzone.getBoundingClientRect();
         if (dropzoneRect && Number.isFinite(dropzoneRect.right)) {
           contentRightX = dropzoneRect.right;
@@ -413,6 +413,7 @@ export function createJsonlViewerApp(deps = {}) {
       setNavFocusActive(isNavFocusActive);
       clearBtn.hidden = !hasContent;
       contentGridEl.hidden = !hasContent;
+      dropzone.hidden = hasContent;
       dropzone.classList.remove("idle", "rendering", "has-content");
       appEl.classList.remove("idle");
 

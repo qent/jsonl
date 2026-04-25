@@ -304,6 +304,7 @@ function createFile(name, text) {
 test('clear button stays hidden until something is rendered', () => {
   const api = createHarness();
 
+  assert.equal(api.dropzone.hidden, false);
   assert.equal(api.clearBtn.hidden, true);
   assert.equal(api.contentGridEl.hidden, true);
   assert.equal(api.outputEl.childElementCount, 0);
@@ -366,6 +367,7 @@ test('clear button appears after rendering and hides again after clear', async (
   await api.handleFiles([createFile('sample.jsonl', validJsonl)]);
 
   assert.equal(api.outputEl.childElementCount, 1);
+  assert.equal(api.dropzone.hidden, true);
   assert.equal(api.dropzone.classList.contains('has-content'), true);
   assert.equal(api.dropzone.classList.contains('idle'), false);
   assert.equal(api.clearBtn.hidden, false);
@@ -381,6 +383,7 @@ test('clear button appears after rendering and hides again after clear', async (
   api.clearOutput();
 
   assert.equal(api.outputEl.childElementCount, 0);
+  assert.equal(api.dropzone.hidden, false);
   assert.equal(api.dropzone.classList.contains('has-content'), false);
   assert.equal(api.dropzone.classList.contains('idle'), true);
   assert.equal(api.clearBtn.hidden, true);
