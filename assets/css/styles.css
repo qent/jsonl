@@ -269,6 +269,27 @@
       place-items: center;
     }
 
+    .history-toggle-btn {
+      left: max(var(--page-inline-gap), 1rem);
+      width: 2.35rem;
+      height: 2.35rem;
+      min-width: 2.35rem;
+      padding: 0;
+      font-size: 1rem;
+      line-height: 1;
+      letter-spacing: 0;
+      display: grid;
+      place-items: center;
+    }
+
+    .collapse-history-btn {
+      top: calc(1.25rem + (2.35rem + 0.48rem) * 2);
+    }
+
+    .expand-history-btn {
+      top: calc(1.25rem + (2.35rem + 0.48rem) * 3);
+    }
+
     .github-link-icon {
       width: 1.05rem;
       height: 1.05rem;
@@ -280,6 +301,21 @@
       border-color: var(--clear-btn-hover-border);
       color: var(--clear-btn-hover-text);
       transform: translateY(-1px);
+      outline: none;
+    }
+
+    .floating-btn:disabled {
+      cursor: default;
+      opacity: 0.5;
+      transform: none;
+      color: var(--muted);
+    }
+
+    .floating-btn:disabled:hover,
+    .floating-btn:disabled:focus-visible {
+      border-color: var(--clear-btn-border);
+      color: var(--muted);
+      transform: none;
       outline: none;
     }
 
@@ -972,6 +1008,14 @@
 
       .github-link-btn {
         top: calc(1rem + 2.35rem + 0.4rem);
+      }
+
+      .collapse-history-btn {
+        top: calc(1rem + (2.35rem + 0.4rem) * 2);
+      }
+
+      .expand-history-btn {
+        top: calc(1rem + (2.35rem + 0.4rem) * 3);
       }
 
       .dropzone {

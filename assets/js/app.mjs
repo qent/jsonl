@@ -28,6 +28,8 @@ export function createJsonlViewerApp(deps = {}) {
     const fileInput = document.getElementById("fileInput");
     const clearBtn = document.getElementById("clearBtn");
     const themeToggleBtn = document.getElementById("themeToggleBtn");
+    const collapseAllBtn = document.getElementById("collapseAllBtn");
+    const expandAllBtn = document.getElementById("expandAllBtn");
     const appEl = document.getElementById("app");
     const mainColumnEl = document.getElementById("mainColumn");
     const statusEl = document.getElementById("status");
@@ -405,12 +407,81 @@ export function createJsonlViewerApp(deps = {}) {
       clearBtn.style.right = `${rightOffset}px`;
     }
 
+    function collectHistoryDetailsNodes(node, detailsNodes) {
+      if (!node || !node.children || node.children.length === 0) {
+        return;
+      }
+
+      for (const child of node.children) {
+        if (!child) {
+          continue;
+        }
+
+        if (child.tagName === "DETAILS") {
+          detailsNodes.push(child);
+        }
+
+        collectHistoryDetailsNodes(child, detailsNodes);
+      }
+    }
+
+    function getHistoryDetailsNodes() {
+      const detailsNodes = [];
+      collectHistoryDetailsNodes(outputEl, detailsNodes);
+      return detailsNodes;
+    }
+
+    function setAllHistoryDetailsOpenState(nextOpenState) {
+      const detailsNodes = getHistoryDetailsNodes();
+      if (detailsNodes.length === 0) {
+        return;
+      }
+
+      const shouldOpen = Boolean(nextOpenState);
+      for (const detailsNode of detailsNodes) {
+        detailsNode.open = shouldOpen;
+      }
+    }
+
+    function syncHistoryToggleButtons(hasContent) {
+      const hasRenderedContent = typeof hasContent === "boolean"
+        ? hasContent
+        : outputEl.childElementCount > 0;
+      const detailsNodes = hasRenderedContent ? getHistoryDetailsNodes() : [];
+      const canToggleHistory = hasRenderedContent && detailsNodes.length > 0;
+
+      if (collapseAllBtn) {
+        collapseAllBtn.disabled = !canToggleHistory;
+      }
+
+      if (expandAllBtn) {
+        expandAllBtn.disabled = !canToggleHistory;
+      }
+    }
+
+    function collapseAllHistoryContent() {
+      if (collapseAllBtn && collapseAllBtn.disabled) {
+        return;
+      }
+
+      setAllHistoryDetailsOpenState(false);
+    }
+
+    function expandAllHistoryContent() {
+      if (expandAllBtn && expandAllBtn.disabled) {
+        return;
+      }
+
+      setAllHistoryDetailsOpenState(true);
+    }
+
     function syncUiState(options = {}) {
       const isRendering = Boolean(options.rendering);
       const hasContent = outputEl.childElementCount > 0;
 
       syncNavVisibility();
       setNavFocusActive(isNavFocusActive);
+      syncHistoryToggleButtons(hasContent);
       clearBtn.hidden = !hasContent;
       contentGridEl.hidden = !hasContent;
       dropzone.hidden = hasContent;
@@ -1595,6 +1666,8 @@ export function createJsonlViewerApp(deps = {}) {
     fileInput.addEventListener("change", onInputChange);
     clearBtn.addEventListener("click", clearOutput);
     themeToggleBtn.addEventListener("click", toggleTheme);
+    collapseAllBtn.addEventListener("click", collapseAllHistoryContent);
+    expandAllBtn.addEventListener("click", expandAllHistoryContent);
     navFocusPipEl.addEventListener("click", toggleNavFocusMode);
     navFocusBackdropEl.addEventListener("click", closeNavFocusMode);
     mainColumnEl.addEventListener("scroll", clearNavTargetHighlightOnScroll);
@@ -1614,6 +1687,8 @@ export function createJsonlViewerApp(deps = {}) {
     clearOutput,
     clearBtn,
     themeToggleBtn,
+    collapseAllBtn,
+    expandAllBtn,
     dropzone,
     outputEl,
     statusEl,

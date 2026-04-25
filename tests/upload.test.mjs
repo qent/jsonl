@@ -306,6 +306,8 @@ test('clear button stays hidden until something is rendered', () => {
 
   assert.equal(api.dropzone.hidden, false);
   assert.equal(api.clearBtn.hidden, true);
+  assert.equal(api.collapseAllBtn.disabled, true);
+  assert.equal(api.expandAllBtn.disabled, true);
   assert.equal(api.contentGridEl.hidden, true);
   assert.equal(api.outputEl.childElementCount, 0);
   assert.equal(api.dropzone.classList.contains('idle'), true);
@@ -371,6 +373,8 @@ test('clear button appears after rendering and hides again after clear', async (
   assert.equal(api.dropzone.classList.contains('has-content'), true);
   assert.equal(api.dropzone.classList.contains('idle'), false);
   assert.equal(api.clearBtn.hidden, false);
+  assert.equal(api.collapseAllBtn.disabled, true);
+  assert.equal(api.expandAllBtn.disabled, true);
   assert.equal(api.contentGridEl.hidden, false);
   assert.equal(api.navListEl.childElementCount, 1);
   assert.equal(api.navColumnEl.hidden, false);
@@ -387,6 +391,8 @@ test('clear button appears after rendering and hides again after clear', async (
   assert.equal(api.dropzone.classList.contains('has-content'), false);
   assert.equal(api.dropzone.classList.contains('idle'), true);
   assert.equal(api.clearBtn.hidden, true);
+  assert.equal(api.collapseAllBtn.disabled, true);
+  assert.equal(api.expandAllBtn.disabled, true);
   assert.equal(api.contentGridEl.hidden, true);
   assert.equal(api.navListEl.childElementCount, 0);
   assert.equal(api.navColumnEl.hidden, true);
@@ -486,6 +492,60 @@ test('index page includes floating GitHub button under theme toggle', () => {
   assert.match(html, /class="github-link-btn floating-btn"/);
   assert.match(html, /href="https:\/\/github\.com\/qent\/jsonl"/);
   assert.match(html, /aria-label="Open JSONL Viewer repository on GitHub"/);
+});
+
+test('index page includes floating collapse and expand controls under GitHub button', () => {
+  const html = readIndexHtml();
+  assert.match(html, /id="collapseAllBtn"/);
+  assert.match(html, /class="history-toggle-btn collapse-history-btn floating-btn"/);
+  assert.match(html, /aria-label="Collapse all history content blocks"/);
+  assert.match(html, /id="expandAllBtn"/);
+  assert.match(html, /class="history-toggle-btn expand-history-btn floating-btn"/);
+  assert.match(html, /aria-label="Expand all history content blocks"/);
+});
+
+test('collapse and expand controls toggle every history details panel', async () => {
+  const api = createHarness();
+  const jsonlObjects = [
+    {
+      type: 'assistant',
+      timestamp: '2026-04-24T12:16:00Z',
+      message: {
+        content: [{ type: 'tool_use', id: 'tool-collapse-expand', name: 'Bash', input: { command: 'echo 42' } }]
+      }
+    },
+    {
+      type: 'user',
+      timestamp: '2026-04-24T12:16:01Z',
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: 'tool-collapse-expand', content: '42' }]
+      }
+    }
+  ];
+  const jsonl = jsonlObjects.map((objectItem) => JSON.stringify(objectItem)).join('\n');
+
+  await api.handleFiles([createFile('sample.jsonl', jsonl)]);
+
+  const fileSection = api.outputEl.children[0];
+  const feed = fileSection.children[1];
+  const toolCard = feed.children[0];
+  const requestPanel = toolCard.children[1];
+  const resultPanel = toolCard.children[2];
+
+  assert.equal(api.collapseAllBtn.disabled, false);
+  assert.equal(api.expandAllBtn.disabled, false);
+  assert.notEqual(requestPanel.open, true);
+  assert.notEqual(resultPanel.open, true);
+
+  api.expandAllBtn.click();
+
+  assert.equal(requestPanel.open, true);
+  assert.equal(resultPanel.open, true);
+
+  api.collapseAllBtn.click();
+
+  assert.equal(requestPanel.open, false);
+  assert.equal(resultPanel.open, false);
 });
 
 test('navigation items define hidden 4px left border and show it only for in-viewport rows', () => {
