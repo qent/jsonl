@@ -480,6 +480,14 @@ test('index page defines SEO and social metadata for GitHub Pages domain', () =>
   assert.match(html, /<script type="application\/ld\+json">[\s\S]*"@type": "WebApplication"[\s\S]*<\/script>/);
 });
 
+test('index page includes floating GitHub button under theme toggle', () => {
+  const html = readIndexHtml();
+  assert.match(html, /id="githubLinkBtn"/);
+  assert.match(html, /class="github-link-btn floating-btn"/);
+  assert.match(html, /href="https:\/\/github\.com\/qent\/jsonl"/);
+  assert.match(html, /aria-label="Open JSONL Viewer repository on GitHub"/);
+});
+
 test('navigation items define hidden 4px left border and show it only for in-viewport rows', () => {
   const stylesCss = readStylesCss();
   const beforeBlockMatch = stylesCss.match(/\.nav-item::before\s*\{([\s\S]*?)\n\s*\}/);

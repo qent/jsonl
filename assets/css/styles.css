@@ -257,6 +257,24 @@
       place-items: center;
     }
 
+    .github-link-btn {
+      left: max(var(--page-inline-gap), 1rem);
+      top: calc(1.25rem + 2.35rem + 0.48rem);
+      width: 2.35rem;
+      height: 2.35rem;
+      min-width: 2.35rem;
+      padding: 0;
+      text-decoration: none;
+      display: grid;
+      place-items: center;
+    }
+
+    .github-link-icon {
+      width: 1.05rem;
+      height: 1.05rem;
+      fill: currentColor;
+    }
+
     .floating-btn:hover,
     .floating-btn:focus-visible {
       border-color: var(--clear-btn-hover-border);
@@ -950,6 +968,10 @@
 
       .floating-btn {
         top: 1rem;
+      }
+
+      .github-link-btn {
+        top: calc(1rem + 2.35rem + 0.4rem);
       }
 
       .dropzone {
