@@ -159,6 +159,10 @@
       padding: 0;
     }
 
+    [hidden] {
+      display: none !important;
+    }
+
     body {
       font: 14px/1.6 "Manrope", "Avenir Next", "Segoe UI", sans-serif;
       color: var(--text);

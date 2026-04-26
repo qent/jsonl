@@ -512,6 +512,11 @@ test('index page includes floating collapse and expand controls under GitHub but
   assert.match(html, /<span class="history-toggle-icon" aria-hidden="true">open_in_full<\/span>/);
 });
 
+test('global hidden attribute rule uses display none important', () => {
+  const stylesCss = readStylesCss();
+  assert.match(stylesCss, /\[hidden\]\s*\{\s*display:\s*none\s*!important;\s*\}/);
+});
+
 test('dropzone hides during rendering and stays hidden after successful render', async () => {
   const api = createHarness();
   let resolveFileText;
