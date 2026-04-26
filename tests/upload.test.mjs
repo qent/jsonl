@@ -3,6 +3,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createJsonlViewerApp } from '../assets/js/app.mjs';
+import {
+  normalizeTodoItems,
+  parseJsonLines,
+  resolveToolNavLabel
+} from '../assets/js/entries.mjs';
+import { createMemoryEntryRecords } from '../assets/js/records.mjs';
+import { calculateVirtualRange } from '../assets/js/render.mjs';
 
 class ClassList {
   constructor() {
@@ -172,6 +179,10 @@ function readStylesCss() {
 
 function readAppModule() {
   return fs.readFileSync(path.join(process.cwd(), 'assets/js/app.mjs'), 'utf8');
+}
+
+function readRenderModule() {
+  return fs.readFileSync(path.join(process.cwd(), 'assets/js/render.mjs'), 'utf8');
 }
 
 function createHarness(appDeps = {}) {
@@ -357,6 +368,76 @@ function findChildByClass(element, className) {
   return (element.children || []).find((child) => child.classList && child.classList.contains(className));
 }
 
+test('pure JSONL parser reports malformed non-empty line numbers', () => {
+  assert.throws(
+    () => parseJsonLines('{"ok":true}\n\n{"broken":'),
+    /Invalid JSON on line 2:/
+  );
+});
+
+test('pure tool helpers normalize todo items and navigation labels', () => {
+  assert.deepEqual(
+    normalizeTodoItems('TodoWrite', {
+      todos: [
+        { content: 'done', status: 'completed' },
+        { content: 'active', status: 'in_progress' },
+        { content: 'unknown', status: 'blocked' },
+        { content: '   ', status: 'completed' }
+      ]
+    }),
+    [
+      { content: 'done', status: 'completed' },
+      { content: 'active', status: 'in_progress' },
+      { content: 'unknown', status: 'pending' }
+    ]
+  );
+  assert.equal(resolveToolNavLabel('Read', { file_path: '/tmp/in.jsonl' }, 'tool'), 'Read: /tmp/in.jsonl');
+  assert.equal(resolveToolNavLabel('Grep', { pattern: 'TODO' }, 'tool'), 'Grep: TODO');
+  assert.equal(resolveToolNavLabel('Skill', { skill: 'Plan markdown' }, 'tool'), '/Plan markdown');
+});
+
+test('pure record helpers preserve anchors and truncate large nav summaries', () => {
+  let nextId = 0;
+  const records = createMemoryEntryRecords([
+    {
+      name: 'sample.jsonl',
+      entries: [
+        {
+          type: 'tool',
+          cls: 'tool',
+          anchor_id: 'existing-anchor',
+          nav_label: 'x'.repeat(260)
+        },
+        {
+          type: 'user',
+          cls: 'user',
+          nav_label: 'hello'
+        }
+      ]
+    }
+  ], {
+    createAnchorId() {
+      const value = `generated-${nextId}`;
+      nextId += 1;
+      return value;
+    }
+  });
+
+  assert.equal(records.length, 2);
+  assert.equal(records[0].summary.anchor_id, 'existing-anchor');
+  assert.equal(records[0].summary.has_details, true);
+  assert.equal(records[0].summary.nav_label.length, 240);
+  assert.equal(records[0].summary.nav_label.endsWith('…'), true);
+  assert.equal(records[1].summary.anchor_id, 'generated-0');
+  assert.equal(records[1].summary.has_details, false);
+});
+
+test('pure virtual range helper applies viewport and overscan bounds', () => {
+  assert.deepEqual(calculateVirtualRange(100, 30, 300, 90, 30), { start: 9, end: 14 });
+  assert.deepEqual(calculateVirtualRange(0, 30, 300, 90, 30), { start: 0, end: 0 });
+  assert.deepEqual(calculateVirtualRange(3, 0, 0, 0, 0), { start: 0, end: 1 });
+});
+
 test('clear button stays hidden until something is rendered', () => {
   const api = createHarness();
 
@@ -374,6 +455,13 @@ test('clear button stays hidden until something is rendered', () => {
   assert.equal(api.navFocusBackdropEl.hidden, true);
   assert.equal(api.appEl.classList.contains('has-nav'), false);
   assert.equal(api.appEl.classList.contains('nav-focus-active'), false);
+});
+
+test('app API exposes destroy cleanup hook', () => {
+  const api = createHarness();
+
+  assert.equal(typeof api.destroy, 'function');
+  assert.doesNotThrow(() => api.destroy());
 });
 
 test('theme button toggles monochrome sun and moon icons on click', () => {
@@ -398,7 +486,7 @@ test('theme button toggles monochrome sun and moon icons on click', () => {
 
 test('light theme keeps markdown code blocks on a light palette and resets token shadows', () => {
   const stylesCss = readStylesCss();
-  const appModule = readAppModule();
+  const renderModule = readRenderModule();
   const rootBlockMatch = stylesCss.match(/:root\s*\{([\s\S]*?)\n\s*\}\n\n\s*\.app\[data-theme="dark"\]/);
   assert.ok(rootBlockMatch, 'root theme block not found');
 
@@ -415,7 +503,7 @@ test('light theme keeps markdown code blocks on a light palette and resets token
   );
 
   assert.match(
-    appModule,
+    renderModule,
     /\.markdown-body pre code span\{background:transparent;color:inherit !important;text-shadow:none\}/
   );
 });

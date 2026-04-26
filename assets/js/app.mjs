@@ -1,3 +1,43 @@
+import {
+  CSS_CLASSES,
+  ELEMENT_IDS,
+  normalizeConfig
+} from "./config.mjs";
+import {
+  parseJsonl
+} from "./entries.mjs";
+import {
+  isCancelledError,
+  throwIfCancelled
+} from "./file-reader.mjs";
+import {
+  buildLargeFileIndex,
+  cacheVirtualEntry,
+  createMemoryEntryRecords,
+  loadEntryForRecord
+} from "./records.mjs";
+import {
+  calculateVirtualRange,
+  collectDetailsNodes,
+  createRenderer
+} from "./render.mjs";
+import {
+  createCopyToastController,
+  createStatusController,
+  createThemeController
+} from "./ui-state.mjs";
+
+/**
+ * @typedef {Object} AppDeps
+ * @property {Document} [document]
+ * @property {Window} [window]
+ * @property {Navigator} [navigator]
+ * @property {Storage} [localStorage]
+ * @property {Function} [requestAnimationFrame]
+ * @property {Function} [setTimeout]
+ * @property {Function} [clearTimeout]
+ */
+
 export function createJsonlViewerApp(deps = {}) {
   const document = deps.document
     ?? (typeof globalThis !== "undefined" ? globalThis.document : undefined);
@@ -24,183 +64,65 @@ export function createJsonlViewerApp(deps = {}) {
   const clearTimeout = deps.clearTimeout
     ?? (typeof globalThis !== "undefined" ? globalThis.clearTimeout : undefined)
     ?? (() => {});
-    const dropzone = document.getElementById("dropzone");
-    const fileInput = document.getElementById("fileInput");
-    const clearBtn = document.getElementById("clearBtn");
-    const themeToggleBtn = document.getElementById("themeToggleBtn");
-    const collapseAllBtn = document.getElementById("collapseAllBtn");
-    const expandAllBtn = document.getElementById("expandAllBtn");
-    const appEl = document.getElementById("app");
-    const mainColumnEl = document.getElementById("mainColumn");
-    const statusEl = document.getElementById("status");
-    const contentGridEl = document.getElementById("contentGrid");
-    const navColumnEl = document.getElementById("navColumn");
-    const navListEl = document.getElementById("navList");
-    const navFocusPipEl = document.getElementById("navFocusPip");
-    const navFocusPipIconEl = document.getElementById("navFocusPipIcon");
-    const navFocusBackdropEl = document.getElementById("navFocusBackdrop");
-    const navHighlightOverlayEl = document.getElementById("navHighlightOverlay");
-    const navHighlightLeftEl = document.getElementById("navHighlightLeft");
-    const navHighlightRightEl = document.getElementById("navHighlightRight");
-    const copyToastEl = document.getElementById("copyToast");
-    const outputEl = document.getElementById("output");
-    const scriptClosingTag = "<" + "/script>";
-    const navTargetHighlightClassName = "nav-target-highlight";
-    const navContentHoverClassName = "content-hover-match";
-    const themeStorageKey = "jsonl-viewer-theme";
-    const navDesktopBreakpoint = 1120;
-    const largeFileByteThreshold = Number.isFinite(deps.largeFileByteThreshold)
-      ? Math.max(0, Number(deps.largeFileByteThreshold))
-      : 25 * 1024 * 1024;
-    const largeEntryThreshold = Number.isFinite(deps.largeEntryThreshold)
-      ? Math.max(1, Number(deps.largeEntryThreshold))
-      : 1500;
-    const streamChunkSize = Number.isFinite(deps.streamChunkSize)
-      ? Math.max(1024, Number(deps.streamChunkSize))
-      : 1024 * 1024;
-    const virtualEntryHeight = Number.isFinite(deps.virtualEntryHeight)
-      ? Math.max(64, Number(deps.virtualEntryHeight))
-      : 220;
-    const virtualNavRowHeight = Number.isFinite(deps.virtualNavRowHeight)
-      ? Math.max(20, Number(deps.virtualNavRowHeight))
-      : 30;
-    const virtualContentOverscanPx = Number.isFinite(deps.virtualContentOverscanPx)
-      ? Math.max(0, Number(deps.virtualContentOverscanPx))
-      : 1200;
-    const virtualNavOverscanRows = Number.isFinite(deps.virtualNavOverscanRows)
-      ? Math.max(0, Number(deps.virtualNavOverscanRows))
-      : 30;
-    const lazyEntryCacheLimit = Number.isFinite(deps.lazyEntryCacheLimit)
-      ? Math.max(1, Number(deps.lazyEntryCacheLimit))
-      : 120;
-    const lazyEntryCacheByteLimit = Number.isFinite(deps.lazyEntryCacheByteLimit)
-      ? Math.max(1024, Number(deps.lazyEntryCacheByteLimit))
-      : 32 * 1024 * 1024;
-    const largeNavLabelMaxLength = Number.isFinite(deps.largeNavLabelMaxLength)
-      ? Math.max(20, Number(deps.largeNavLabelMaxLength))
-      : 240;
-    const toolSummaryInputPreviewMaxLength = Number.isFinite(deps.toolSummaryInputPreviewMaxLength)
-      ? Math.max(1, Number(deps.toolSummaryInputPreviewMaxLength))
-      : 90;
-    const toolSummaryResultPreviewMaxLength = Number.isFinite(deps.toolSummaryResultPreviewMaxLength)
-      ? Math.max(1, Number(deps.toolSummaryResultPreviewMaxLength))
-      : 110;
-    const toolSummaryErrorPreviewMaxLength = Number.isFinite(deps.toolSummaryErrorPreviewMaxLength)
-      ? Math.max(1, Number(deps.toolSummaryErrorPreviewMaxLength))
-      : 110;
+    const dropzone = document.getElementById(ELEMENT_IDS.dropzone);
+    const fileInput = document.getElementById(ELEMENT_IDS.fileInput);
+    const clearBtn = document.getElementById(ELEMENT_IDS.clearBtn);
+    const themeToggleBtn = document.getElementById(ELEMENT_IDS.themeToggleBtn);
+    const collapseAllBtn = document.getElementById(ELEMENT_IDS.collapseAllBtn);
+    const expandAllBtn = document.getElementById(ELEMENT_IDS.expandAllBtn);
+    const appEl = document.getElementById(ELEMENT_IDS.app);
+    const mainColumnEl = document.getElementById(ELEMENT_IDS.mainColumn);
+    const statusEl = document.getElementById(ELEMENT_IDS.status);
+    const contentGridEl = document.getElementById(ELEMENT_IDS.contentGrid);
+    const navColumnEl = document.getElementById(ELEMENT_IDS.navColumn);
+    const navListEl = document.getElementById(ELEMENT_IDS.navList);
+    const navFocusPipEl = document.getElementById(ELEMENT_IDS.navFocusPip);
+    const navFocusPipIconEl = document.getElementById(ELEMENT_IDS.navFocusPipIcon);
+    const navFocusBackdropEl = document.getElementById(ELEMENT_IDS.navFocusBackdrop);
+    const navHighlightOverlayEl = document.getElementById(ELEMENT_IDS.navHighlightOverlay);
+    const navHighlightLeftEl = document.getElementById(ELEMENT_IDS.navHighlightLeft);
+    const navHighlightRightEl = document.getElementById(ELEMENT_IDS.navHighlightRight);
+    const copyToastEl = document.getElementById(ELEMENT_IDS.copyToast);
+    const outputEl = document.getElementById(ELEMENT_IDS.output);
+    const config = normalizeConfig(deps);
+    const {
+      largeFileByteThreshold,
+      largeEntryThreshold,
+      virtualEntryHeight,
+      virtualNavRowHeight,
+      virtualContentOverscanPx,
+      virtualNavOverscanRows,
+      navDesktopBreakpoint
+    } = config;
+    const navTargetHighlightClassName = CSS_CLASSES.navTargetHighlight;
+    const navContentHoverClassName = CSS_CLASSES.navContentHover;
     let entryCounter = 0;
     let activeNavTargetCard = null;
     let activeContentHoverNavItem = null;
     let isNavAutoScrolling = false;
     let isNavFocusActive = false;
-    let copyToastTimer = null;
     let activeLoadToken = null;
     let activeVirtualSession = null;
-
-    function readStoredTheme() {
-      if (typeof localStorage === "undefined" || typeof localStorage.getItem !== "function") {
-        return "";
-      }
-
-      try {
-        return String(localStorage.getItem(themeStorageKey) || "").trim().toLowerCase();
-      } catch (_error) {
-        return "";
-      }
-    }
-
-    function storeTheme(theme) {
-      if (typeof localStorage === "undefined" || typeof localStorage.setItem !== "function") {
-        return;
-      }
-
-      try {
-        localStorage.setItem(themeStorageKey, theme);
-      } catch (_error) {
-        // Storage may be unavailable in private mode or tests.
-      }
-    }
-
-    function resolveInitialTheme() {
-      const storedTheme = readStoredTheme();
-      if (storedTheme === "dark" || storedTheme === "light") {
-        return storedTheme;
-      }
-
-      if (typeof window !== "undefined"
-        && typeof window.matchMedia === "function"
-        && window.matchMedia("(prefers-color-scheme: dark)").matches) {
-        return "dark";
-      }
-
-      return "light";
-    }
-
-    function readCurrentTheme() {
-      if (!appEl) {
-        return "light";
-      }
-
-      if (typeof appEl.getAttribute === "function") {
-        const attributeValue = String(appEl.getAttribute("data-theme") || "").trim().toLowerCase();
-        if (attributeValue === "dark" || attributeValue === "light") {
-          return attributeValue;
-        }
-      }
-
-      if (appEl.attributes && typeof appEl.attributes["data-theme"] === "string") {
-        const fallbackAttributeValue = String(appEl.attributes["data-theme"]).trim().toLowerCase();
-        if (fallbackAttributeValue === "dark" || fallbackAttributeValue === "light") {
-          return fallbackAttributeValue;
-        }
-      }
-
-      if (appEl.dataset && typeof appEl.dataset.theme === "string") {
-        const datasetValue = String(appEl.dataset.theme).trim().toLowerCase();
-        if (datasetValue === "dark" || datasetValue === "light") {
-          return datasetValue;
-        }
-      }
-
-      return "light";
-    }
-
-    function syncThemeToggleState(theme) {
-      if (!themeToggleBtn) {
-        return;
-      }
-
-      const isDarkTheme = theme === "dark";
-      themeToggleBtn.textContent = isDarkTheme ? "☾" : "☀";
-      themeToggleBtn.setAttribute("aria-pressed", String(isDarkTheme));
-      themeToggleBtn.setAttribute("aria-label", isDarkTheme ? "Switch to light theme" : "Switch to dark theme");
-    }
-
-    function applyTheme(theme, options = {}) {
-      const normalizedTheme = theme === "dark" ? "dark" : "light";
-      appEl.setAttribute("data-theme", normalizedTheme);
-      if (appEl.dataset) {
-        appEl.dataset.theme = normalizedTheme;
-      }
-
-      const rootEl = typeof document !== "undefined" ? document.documentElement : null;
-      if (rootEl && typeof rootEl.setAttribute === "function") {
-        rootEl.setAttribute("data-theme", normalizedTheme);
-      }
-
-      syncThemeToggleState(normalizedTheme);
-
-      if (options.persist === false) {
-        return;
-      }
-
-      storeTheme(normalizedTheme);
-    }
-
-    function toggleTheme() {
-      const nextTheme = readCurrentTheme() === "dark" ? "light" : "dark";
-      applyTheme(nextTheme);
-    }
+    const { setStatus } = createStatusController(statusEl);
+    const {
+      clearCopyToastTimer,
+      showCopyToast
+    } = createCopyToastController({
+      copyToastEl,
+      setTimeout,
+      clearTimeout
+    });
+    const {
+      applyTheme,
+      resolveInitialTheme,
+      toggleTheme
+    } = createThemeController({
+      document,
+      window,
+      localStorage,
+      appEl,
+      themeToggleBtn
+    });
 
     function collectNavItemElements(node, navItems = []) {
       if (!node || !node.children) {
@@ -471,28 +393,8 @@ export function createJsonlViewerApp(deps = {}) {
       clearBtn.style.right = `${rightOffset}px`;
     }
 
-    function collectHistoryDetailsNodes(node, detailsNodes) {
-      if (!node || !node.children || node.children.length === 0) {
-        return;
-      }
-
-      for (const child of node.children) {
-        if (!child) {
-          continue;
-        }
-
-        if (child.tagName === "DETAILS") {
-          detailsNodes.push(child);
-        }
-
-        collectHistoryDetailsNodes(child, detailsNodes);
-      }
-    }
-
     function getHistoryDetailsNodes() {
-      const detailsNodes = [];
-      collectHistoryDetailsNodes(outputEl, detailsNodes);
-      return detailsNodes;
+      return collectDetailsNodes(outputEl, []);
     }
 
     function setAllHistoryDetailsOpenState(nextOpenState) {
@@ -587,27 +489,40 @@ export function createJsonlViewerApp(deps = {}) {
       syncVisibleNavItemBorders();
     }
 
-    function setStatus(message, kind = "") {
-      statusEl.textContent = message;
-      statusEl.className = kind ? `status ${kind}` : "status";
-    }
-
-    function showCopyToast(message = "Copied") {
-      if (!copyToastEl) {
-        return;
+    const {
+      applyDetailsOpenState,
+      appendEntryCardBody,
+      createMetaRow,
+      createVirtualCardShell,
+      createVirtualNavItem,
+      createVirtualSpacer,
+      openToolInputPanel,
+      renderEntries
+    } = createRenderer({
+      document,
+      navigator,
+      showCopyToast,
+      createAnchorId: nextEntryAnchorId,
+      navListEl,
+      syncVisibleNavItemBorders,
+      onCardHover: applyContentHoverNavItem,
+      onCardLeave: clearContentHoverNavItem,
+      onNavItemClick(targetCard) {
+        openToolInputPanel(targetCard);
+        markNavAutoScrolling();
+        targetCard.scrollIntoView({
+          block: "center",
+          behavior: "instant"
+        });
+        applyNavTargetHighlight(targetCard);
+      },
+      onVirtualNavItemClick(session, record) {
+        scrollVirtualContentToEntry(session, record.entryIndex, {
+          openTool: true,
+          highlight: true
+        });
       }
-
-      copyToastEl.textContent = String(message || "Copied");
-      copyToastEl.classList.add("visible");
-
-      if (copyToastTimer) {
-        clearTimeout(copyToastTimer);
-      }
-
-      copyToastTimer = setTimeout(() => {
-        copyToastEl.classList.remove("visible");
-      }, 1100);
-    }
+    });
 
     function createLoadToken() {
       if (activeLoadToken) {
@@ -622,226 +537,6 @@ export function createJsonlViewerApp(deps = {}) {
       if (activeLoadToken) {
         activeLoadToken.cancelled = true;
       }
-    }
-
-    function throwIfCancelled(loadToken) {
-      if (loadToken && loadToken.cancelled) {
-        const error = new Error("Loading cancelled");
-        error.name = "AbortError";
-        throw error;
-      }
-    }
-
-    function isCancelledError(error) {
-      return Boolean(error && error.name === "AbortError");
-    }
-
-    function sleep(ms = 0) {
-      return new Promise((resolve) => {
-        setTimeout(resolve, ms);
-      });
-    }
-
-    function formatByteCount(byteCount) {
-      const bytes = Number(byteCount || 0);
-      if (!Number.isFinite(bytes) || bytes <= 0) {
-        return "0 B";
-      }
-
-      const units = ["B", "KB", "MB", "GB", "TB"];
-      let value = bytes;
-      let unitIndex = 0;
-      while (value >= 1024 && unitIndex < units.length - 1) {
-        value /= 1024;
-        unitIndex += 1;
-      }
-
-      const precision = value >= 100 || unitIndex === 0 ? 0 : value >= 10 ? 1 : 2;
-      return `${value.toFixed(precision)} ${units[unitIndex]}`;
-    }
-
-    function concatBytes(parts, totalLength) {
-      if (parts.length === 1 && parts[0].length === totalLength) {
-        return parts[0];
-      }
-
-      const bytes = new Uint8Array(totalLength);
-      let offset = 0;
-      for (const part of parts) {
-        bytes.set(part, offset);
-        offset += part.length;
-      }
-      return bytes;
-    }
-
-    function createUtf8Decoder() {
-      if (typeof TextDecoder === "function") {
-        return new TextDecoder();
-      }
-
-      return {
-        decode(bytes) {
-          let text = "";
-          for (const byte of bytes) {
-            text += String.fromCharCode(byte);
-          }
-          return decodeURIComponent(escape(text));
-        }
-      };
-    }
-
-    function normalizeJsonLineText(lineText) {
-      return String(lineText || "").replace(/\r$/, "");
-    }
-
-    async function* iterateByteChunks(file, loadToken) {
-      if (file && typeof file.stream === "function") {
-        const stream = file.stream();
-        if (stream && typeof stream.getReader === "function") {
-          const reader = stream.getReader();
-          try {
-            while (true) {
-              throwIfCancelled(loadToken);
-              const result = await reader.read();
-              if (result.done) {
-                break;
-              }
-
-              const value = result.value;
-              if (!value || value.length === 0) {
-                continue;
-              }
-              yield value instanceof Uint8Array ? value : new Uint8Array(value);
-            }
-          } finally {
-            if (loadToken && loadToken.cancelled && typeof reader.cancel === "function") {
-              try {
-                await reader.cancel();
-              } catch (_error) {
-                // The reader may already be closed.
-              }
-            }
-          }
-          return;
-        }
-
-        if (stream && typeof stream[Symbol.asyncIterator] === "function") {
-          for await (const chunk of stream) {
-            throwIfCancelled(loadToken);
-            if (!chunk || chunk.length === 0) {
-              continue;
-            }
-            yield chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
-          }
-          return;
-        }
-      }
-
-      if (file && typeof file.slice === "function") {
-        const fileSize = Math.max(0, Number(file.size || 0));
-        for (let start = 0; start < fileSize; start += streamChunkSize) {
-          throwIfCancelled(loadToken);
-          const end = Math.min(fileSize, start + streamChunkSize);
-          const slice = file.slice(start, end);
-          let arrayBuffer;
-          if (slice && typeof slice.arrayBuffer === "function") {
-            arrayBuffer = await slice.arrayBuffer();
-          } else if (slice && typeof slice.text === "function") {
-            const text = await slice.text();
-            arrayBuffer = new TextEncoder().encode(text).buffer;
-          } else {
-            throw new Error("Unable to read file chunks in this browser.");
-          }
-          yield new Uint8Array(arrayBuffer);
-        }
-        return;
-      }
-
-      throw new Error("This browser does not support chunked file reads.");
-    }
-
-    async function* iterateJsonlLines(file, loadToken) {
-      const decoder = createUtf8Decoder();
-      let pendingParts = [];
-      let pendingLength = 0;
-      let byteOffset = 0;
-      let lineStartOffset = 0;
-      let lineNumber = 1;
-
-      for await (const chunk of iterateByteChunks(file, loadToken)) {
-        let segmentStartIndex = 0;
-
-        for (let index = 0; index < chunk.length; index += 1) {
-          if (chunk[index] !== 10) {
-            continue;
-          }
-
-          const segment = chunk.slice(segmentStartIndex, index);
-          if (segment.length > 0) {
-            pendingParts.push(segment);
-            pendingLength += segment.length;
-          }
-
-          const lineBytes = concatBytes(pendingParts, pendingLength);
-          const lineText = normalizeJsonLineText(decoder.decode(lineBytes));
-          yield {
-            text: lineText,
-            start: lineStartOffset,
-            end: byteOffset + index,
-            lineNumber
-          };
-
-          pendingParts = [];
-          pendingLength = 0;
-          lineNumber += 1;
-          segmentStartIndex = index + 1;
-          lineStartOffset = byteOffset + index + 1;
-        }
-
-        const rest = chunk.slice(segmentStartIndex);
-        if (rest.length > 0) {
-          pendingParts.push(rest);
-          pendingLength += rest.length;
-        }
-
-        byteOffset += chunk.length;
-      }
-
-      if (pendingLength > 0 || lineStartOffset < byteOffset) {
-        const lineBytes = concatBytes(pendingParts, pendingLength);
-        const lineText = normalizeJsonLineText(decoder.decode(lineBytes));
-        yield {
-          text: lineText,
-          start: lineStartOffset,
-          end: byteOffset,
-          lineNumber
-        };
-      }
-    }
-
-    async function readLineRef(lineRef) {
-      if (!lineRef) {
-        return "";
-      }
-      if (typeof lineRef.text === "string") {
-        return lineRef.text;
-      }
-
-      const file = lineRef.file;
-      if (!file || typeof file.slice !== "function") {
-        throw new Error("Unable to read indexed line because file slicing is unavailable.");
-      }
-
-      const slice = file.slice(lineRef.start, lineRef.end);
-      if (slice && typeof slice.text === "function") {
-        return normalizeJsonLineText(await slice.text());
-      }
-      if (slice && typeof slice.arrayBuffer === "function") {
-        const bytes = new Uint8Array(await slice.arrayBuffer());
-        return normalizeJsonLineText(createUtf8Decoder().decode(bytes));
-      }
-
-      throw new Error("Unable to read indexed line.");
     }
 
     function clearNavTargetHighlight() {
@@ -999,1197 +694,10 @@ export function createJsonlViewerApp(deps = {}) {
       }, 0);
     }
 
-    function formatTimestamp(rawTimestamp) {
-      if (typeof rawTimestamp !== "string") {
-        return "";
-      }
-
-      const isoTimeMatch = rawTimestamp.match(/T(\d{2}:\d{2}:\d{2})/);
-      if (isoTimeMatch) {
-        return isoTimeMatch[1];
-      }
-
-      return rawTimestamp;
-    }
-
-    function formatDuration(durationMs) {
-      const durationSeconds = Math.floor(Number(durationMs || 0) / 1000);
-      const hours = Math.floor(durationSeconds / 3600);
-      const minutes = Math.floor((durationSeconds % 3600) / 60);
-      const seconds = durationSeconds % 60;
-
-      if (hours > 0) {
-        return `${hours}h ${minutes}m ${seconds}s`;
-      }
-
-      if (minutes > 0) {
-        return `${minutes}m ${seconds}s`;
-      }
-
-      return `${seconds}s`;
-    }
-
-    function parseTimestampMs(rawTimestamp) {
-      if (typeof rawTimestamp !== "string") {
-        return null;
-      }
-
-      const parsedTimestamp = Date.parse(rawTimestamp);
-      return Number.isFinite(parsedTimestamp) ? parsedTimestamp : null;
-    }
-
-    function formatTenthsSecondsBadge(durationMs) {
-      const safeDurationMs = Number(durationMs);
-      if (!Number.isFinite(safeDurationMs) || safeDurationMs < 0) {
-        return "";
-      }
-
-      const roundedTenthsSeconds = Math.ceil(safeDurationMs / 100) / 10;
-      return `${roundedTenthsSeconds.toFixed(1)} s`;
-    }
-
-    function resolveToolDurationBadge(toolResultItem, toolUseRawTimestamp, resultRawTimestamp) {
-      const explicitDurationMs = Number(toolResultItem && toolResultItem.duration_ms);
-      if (Number.isFinite(explicitDurationMs) && explicitDurationMs >= 0) {
-        return formatTenthsSecondsBadge(explicitDurationMs);
-      }
-
-      const startTimestampMs = parseTimestampMs(toolUseRawTimestamp);
-      const endTimestampMs = parseTimestampMs(resultRawTimestamp);
-      if (startTimestampMs === null || endTimestampMs === null || endTimestampMs < startTimestampMs) {
-        return "";
-      }
-
-      return formatTenthsSecondsBadge(endTimestampMs - startTimestampMs);
-    }
-
-    function round4(value) {
-      return Math.round(Number(value || 0) * 10000) / 10000;
-    }
-
-    function prettyJson(value) {
-      return JSON.stringify(value, null, 2);
-    }
-
     function nextEntryAnchorId() {
       const current = entryCounter;
       entryCounter += 1;
       return `entry-${current}`;
-    }
-
-    function getTypeLabel(entryType) {
-      if (!entryType) {
-        return "entry";
-      }
-
-      return String(entryType);
-    }
-
-    function formatNavTime(rawTime) {
-      if (typeof rawTime !== "string") {
-        return "";
-      }
-
-      const normalized = rawTime.trim();
-      if (!normalized) {
-        return "";
-      }
-
-      const timeMatch = normalized.match(/(?:T|\b)(\d{2}:\d{2})(?::\d{2})?/);
-      if (timeMatch) {
-        return timeMatch[1];
-      }
-
-      return normalized;
-    }
-
-    function joinTextPartsSingleLine(parts) {
-      const combined = (parts || [])
-        .map((part) => String(part && part.text ? part.text : ""))
-        .join(" ");
-      return combined.replace(/\s+/g, " ").trim();
-    }
-
-    function toSingleLineText(value) {
-      if (value === null || value === undefined) {
-        return "";
-      }
-
-      return String(value).replace(/\s+/g, " ").trim();
-    }
-
-    function truncateTextEnd(value, maxLength) {
-      const normalized = toSingleLineText(value);
-      const safeMaxLength = Math.max(1, Number(maxLength || 1));
-      if (normalized.length <= safeMaxLength) {
-        return normalized;
-      }
-
-      return `${normalized.slice(0, safeMaxLength)}...`;
-    }
-
-    function truncateTextStart(value, maxLength) {
-      const normalized = toSingleLineText(value);
-      const safeMaxLength = Math.max(1, Number(maxLength || 1));
-      if (normalized.length <= safeMaxLength) {
-        return normalized;
-      }
-
-      return `...${normalized.slice(-safeMaxLength)}`;
-    }
-
-    function normalizeSkillName(value) {
-      const normalized = toSingleLineText(value);
-      if (!normalized) {
-        return "";
-      }
-
-      if (normalized.startsWith("/")) {
-        return normalized;
-      }
-
-      return `/${normalized}`;
-    }
-
-    function serializeToolResultContent(toolResultContent) {
-      if (typeof toolResultContent === "string") {
-        return toolResultContent;
-      }
-
-      if (toolResultContent === null || toolResultContent === undefined) {
-        return "";
-      }
-
-      return prettyJson(toolResultContent);
-    }
-
-    function resolveToolRequestSummary(toolName, toolInput) {
-      const normalizedToolName = toSingleLineText(toolName) || "tool";
-      const input = toolInput && typeof toolInput === "object" ? toolInput : {};
-
-      if (normalizedToolName === "Skill") {
-        return {
-          label: "Skill",
-          preview: normalizeSkillName(input.skill)
-        };
-      }
-
-      if (normalizedToolName === "Read") {
-        return {
-          label: "Read",
-          preview: truncateTextStart(input.file_path, toolSummaryInputPreviewMaxLength)
-        };
-      }
-
-      if (normalizedToolName === "Grep") {
-        return {
-          label: "Grep",
-          preview: toSingleLineText(input.pattern)
-        };
-      }
-
-      if (normalizedToolName === "Bash") {
-        return {
-          label: "Bash",
-          preview: truncateTextEnd(input.command, toolSummaryInputPreviewMaxLength)
-        };
-      }
-
-      return {
-        label: normalizedToolName,
-        preview: ""
-      };
-    }
-
-    function resolveToolResultSummary(toolResultContent, isToolError) {
-      const maxLength = isToolError
-        ? toolSummaryErrorPreviewMaxLength
-        : toolSummaryResultPreviewMaxLength;
-      return {
-        label: "",
-        preview: truncateTextEnd(
-          serializeToolResultContent(toolResultContent),
-          maxLength
-        ),
-        variant: isToolError ? "error" : "default"
-      };
-    }
-
-    function createResultCostLabel(value) {
-      return `${round4(value)}$`;
-    }
-
-    function normalizeTodoItems(toolName, toolInput) {
-      if (toolName !== "TodoWrite") {
-        return [];
-      }
-
-      const input = toolInput && typeof toolInput === "object" ? toolInput : {};
-      const todos = input.todos;
-      if (!Array.isArray(todos)) {
-        return [];
-      }
-
-      const normalizedTodos = [];
-      for (const todo of todos) {
-        if (!todo || typeof todo !== "object") {
-          continue;
-        }
-
-        const content = String(todo.content || "");
-        if (!content.trim()) {
-          continue;
-        }
-
-        const status = todo.status === "completed" || todo.status === "in_progress"
-          ? todo.status
-          : "pending";
-
-        normalizedTodos.push({
-          content,
-          status
-        });
-      }
-
-      return normalizedTodos;
-    }
-
-    function resolveToolNavLabel(toolName, toolInput, fallbackLabel) {
-      const safeFallback = fallbackLabel || toolName || "tool";
-      const input = toolInput && typeof toolInput === "object" ? toolInput : {};
-
-      if (toolName === "Skill") {
-        const skillValue = normalizeSkillName(input.skill);
-        return skillValue || String(safeFallback).trim() || safeFallback;
-      }
-
-      if (toolName === "Bash") {
-        const commandValue = input.command;
-        return String(commandValue || safeFallback).trim() || safeFallback;
-      }
-
-      if (toolName === "Glob" || toolName === "Grep") {
-        const patternValue = String(input.pattern || "").trim();
-        return patternValue ? `${toolName}: ${patternValue}` : String(toolName || safeFallback).trim();
-      }
-
-      if (toolName === "Write") {
-        const filePathValue = String(input.file_path || "").trim();
-        return filePathValue ? `Write: ${filePathValue}` : String(toolName || safeFallback).trim();
-      }
-
-      if (toolName === "Read") {
-        const filePathValue = String(input.file_path || "").trim();
-        return filePathValue ? `Read: ${filePathValue}` : String(toolName || safeFallback).trim();
-      }
-
-      return String(toolName || safeFallback).trim() || safeFallback;
-    }
-
-    function resolveToolErrorNavLabel(toolName, fallbackLabel, toolResultContent) {
-      const labelPrefix = toSingleLineText(toolName) || toSingleLineText(fallbackLabel) || "tool";
-      const contentOneLine = typeof toolResultContent === "string"
-        ? toSingleLineText(toolResultContent)
-        : toolResultContent === null || toolResultContent === undefined
-          ? ""
-          : toSingleLineText(prettyJson(toolResultContent));
-
-      return contentOneLine ? `${labelPrefix}: ${contentOneLine}` : labelPrefix;
-    }
-
-    function resolveBashSuccessNavLabel(toolName, toolInput, isToolError) {
-      if (toolName !== "Bash" || isToolError) {
-        return "";
-      }
-
-      const input = toolInput && typeof toolInput === "object" ? toolInput : {};
-      return toSingleLineText(input.command);
-    }
-
-    function parseJsonLines(text) {
-      const jsonLines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
-      const parsedObjects = [];
-
-      for (let index = 0; index < jsonLines.length; index += 1) {
-        const line = jsonLines[index];
-
-        try {
-          parsedObjects.push(JSON.parse(line));
-        } catch (error) {
-          throw new Error(`Invalid JSON on line ${index + 1}: ${error.message}`);
-        }
-      }
-
-      return parsedObjects;
-    }
-
-    function collectToolUses(objects) {
-      const toolUses = {};
-
-      for (const objectItem of objects) {
-        const message = objectItem.message || {};
-        const content = message.content;
-        if (!Array.isArray(content)) {
-          continue;
-        }
-
-        const rawTimestamp = String(objectItem.timestamp || "");
-        const timestamp = formatTimestamp(rawTimestamp);
-
-        for (const contentItem of content) {
-          if (!contentItem || contentItem.type !== "tool_use" || !contentItem.id) {
-            continue;
-          }
-
-          toolUses[contentItem.id] = {
-            name: contentItem.name,
-            time: timestamp,
-            raw_time: rawTimestamp,
-            json: prettyJson(contentItem.input || {}),
-            input: contentItem.input || {}
-          };
-        }
-      }
-
-      return toolUses;
-    }
-
-    function buildEntries(objects, toolUses) {
-      const entries = [];
-
-      for (const objectItem of objects) {
-        const itemType = objectItem.type || "";
-        const itemRawTimestamp = String(objectItem.timestamp || "");
-        const itemTimestamp = formatTimestamp(itemRawTimestamp);
-
-        if (itemType === "result") {
-          const resultCost = round4(objectItem.total_cost_usd);
-          entries.push({
-            type: itemType,
-            cls: "result",
-            time: itemTimestamp,
-            anchor_id: nextEntryAnchorId(),
-            nav_label: createResultCostLabel(resultCost),
-            parts: [
-              {
-                kind: "result_stats",
-                duration: formatDuration(objectItem.duration_ms),
-                turns: objectItem.num_turns || 0,
-                cost: resultCost
-              }
-            ]
-          });
-          continue;
-        }
-
-        const message = objectItem.message || {};
-        const content = message.content;
-
-        if (!Array.isArray(content)) {
-          const subtypeLabel = String(message.subtype || "").trim();
-          const rawNavLabel = itemType === "system"
-            ? subtypeLabel || getTypeLabel(itemType)
-            : `${getTypeLabel(itemType)}: ${subtypeLabel}`.trim();
-          const rawMessageJson = prettyJson(message);
-          entries.push({
-            type: itemType,
-            cls: itemType === "error" ? "error" : itemType,
-            time: itemTimestamp,
-            anchor_id: nextEntryAnchorId(),
-            nav_label: rawNavLabel,
-            copy_text: itemType === "system" ? rawMessageJson : "",
-            parts: [
-              {
-                kind: "raw",
-                label: rawNavLabel || getTypeLabel(itemType),
-                json: rawMessageJson
-              }
-            ]
-          });
-          continue;
-        }
-
-        const textParts = [];
-        const toolResultItems = [];
-
-        for (const contentItem of content) {
-          if (!contentItem) {
-            continue;
-          }
-
-          if (contentItem.type === "text") {
-            const rawText = String(contentItem.text || "");
-            textParts.push({
-              kind: "text",
-              text: rawText.replaceAll(scriptClosingTag, "<\\/script>"),
-              raw_text: rawText
-            });
-          }
-
-          if (contentItem.type === "tool_result") {
-            toolResultItems.push(contentItem);
-          }
-        }
-
-        if (textParts.length > 0) {
-          const normalizedType = itemType === "assistant" ? "agent" : itemType;
-          const textCopyPayload = textParts
-            .map((part) => String(part.raw_text || ""))
-            .join("\n\n");
-          const textNavLabel = normalizedType === "system"
-            ? String(message.subtype || getTypeLabel(normalizedType))
-            : joinTextPartsSingleLine(textParts) || getTypeLabel(normalizedType);
-          entries.push({
-            type: normalizedType,
-            cls: itemType === "assistant"
-              ? "agent"
-              : itemType === "error"
-                ? "error"
-                : itemType,
-            time: itemTimestamp,
-            anchor_id: nextEntryAnchorId(),
-            nav_label: textNavLabel,
-            copy_text: textCopyPayload,
-            copy_in_meta: true,
-            parts: textParts
-          });
-        }
-
-        for (const toolResultItem of toolResultItems) {
-          const toolUseId = toolResultItem.tool_use_id || "";
-          const toolUse = toolUses[toolUseId] || {};
-          const normalizedTodos = normalizeTodoItems(toolUse.name || "", toolUse.input || {});
-          const isTodoWriteEntry = (toolUse.name || "") === "TodoWrite" && normalizedTodos.length > 0;
-          const toolDurationBadge = resolveToolDurationBadge(
-            toolResultItem,
-            toolUse.raw_time || "",
-            itemRawTimestamp
-          );
-          const resultJson = serializeToolResultContent(toolResultItem.content);
-          const isToolError = Boolean(toolResultItem.is_error);
-          const defaultToolNavLabel = resolveToolNavLabel(
-            toolUse.name || "",
-            toolUse.input || {},
-            toolUseId || "tool"
-          );
-          const toolErrorNavLabel = resolveToolErrorNavLabel(
-            toolUse.name || "",
-            toolUseId || "tool",
-            toolResultItem.content
-          );
-          const bashSuccessNavLabel = resolveBashSuccessNavLabel(
-            toolUse.name || "",
-            toolUse.input || {},
-            isToolError
-          );
-          const requestSummary = resolveToolRequestSummary(
-            toolUse.name || toolUseId || "tool",
-            toolUse.input || {}
-          );
-          const resultSummary = resolveToolResultSummary(
-            toolResultItem.content,
-            isToolError
-          );
-          const toolNavLabel = isToolError
-            ? toolErrorNavLabel
-            : bashSuccessNavLabel || defaultToolNavLabel;
-
-          entries.push({
-            type: "tool",
-            cls: "tool",
-            time: toolUse.time || itemTimestamp,
-            tool_name: toolUse.name || toolUseId,
-            request_json: toolUse.json || "{}",
-            request_input: toolUse.input || {},
-            result_json: resultJson,
-            tool_duration_badge: toolDurationBadge,
-            tool_variant: isTodoWriteEntry ? "todowrite" : "",
-            tool_use_id: toolUseId,
-            todos: normalizedTodos,
-            error: isToolError,
-            anchor_id: nextEntryAnchorId(),
-            nav_label: toolNavLabel,
-            nav_label_variant: bashSuccessNavLabel ? "bash-success" : "",
-            request_summary_label: requestSummary.label,
-            request_summary_preview: requestSummary.preview,
-            result_summary_label: resultSummary.label,
-            result_summary_preview: resultSummary.preview,
-            result_summary_variant: resultSummary.variant
-          });
-        }
-      }
-
-      return entries;
-    }
-
-    function parseJsonl(text) {
-      const objects = parseJsonLines(text);
-      const toolUses = collectToolUses(objects);
-      return buildEntries(objects, toolUses);
-    }
-
-    function truncateNavLabel(labelText) {
-      const label = String(labelText || "");
-      if (label.length <= largeNavLabelMaxLength) {
-        return label;
-      }
-
-      return `${label.slice(0, largeNavLabelMaxLength - 1)}…`;
-    }
-
-    function entryHasDetails(entry) {
-      if (!entry || entry.type === "tool") {
-        return Boolean(entry && entry.type === "tool");
-      }
-
-      return (entry.parts || []).some((part) => part && (part.kind === "raw" || part.kind === "tool" || part.kind === "result"));
-    }
-
-    function createEntrySummary(entry, fileIndex, fileName, entryIndex, lineRef) {
-      return {
-        type: entry.type || "",
-        cls: entry.cls || "",
-        time: entry.time || "",
-        tool_name: entry.tool_name || "",
-        tool_duration_badge: entry.tool_duration_badge || "",
-        tool_variant: entry.tool_variant || "",
-        error: Boolean(entry.error),
-        nav_label: truncateNavLabel(entry.nav_label || getTypeLabel(entry.type)),
-        nav_label_variant: entry.nav_label_variant || "",
-        anchor_id: entry.anchor_id || nextEntryAnchorId(),
-        tool_use_id: entry.tool_use_id || "",
-        has_details: entryHasDetails(entry),
-        file_index: fileIndex,
-        file_name: fileName,
-        entry_index: entryIndex,
-        line_number: lineRef ? lineRef.lineNumber : 0
-      };
-    }
-
-    function collectToolUsesFromObject(objectItem, lineRef, toolUses) {
-      const message = objectItem.message || {};
-      const content = message.content;
-      if (!Array.isArray(content)) {
-        return;
-      }
-
-      const rawTimestamp = String(objectItem.timestamp || "");
-      const timestamp = formatTimestamp(rawTimestamp);
-
-      for (const contentItem of content) {
-        if (!contentItem || contentItem.type !== "tool_use" || !contentItem.id) {
-          continue;
-        }
-
-        toolUses[contentItem.id] = {
-          name: contentItem.name,
-          time: timestamp,
-          raw_time: rawTimestamp,
-          json: prettyJson(contentItem.input || {}),
-          input: contentItem.input || {},
-          line_ref: lineRef
-        };
-      }
-    }
-
-    function createLineRef(file, lineInfo, keepTextFallback) {
-      return {
-        file,
-        start: lineInfo.start,
-        end: lineInfo.end,
-        lineNumber: lineInfo.lineNumber,
-        text: keepTextFallback ? lineInfo.text : undefined
-      };
-    }
-
-    function buildEntryRecordsForObject(objectItem, options) {
-      const {
-        file,
-        fileIndex,
-        fileName,
-        lineRef,
-        toolUses,
-        records
-      } = options;
-
-      collectToolUsesFromObject(objectItem, lineRef, toolUses);
-      const lineEntries = buildEntries([objectItem], toolUses);
-      const consumedToolUseIds = [];
-      for (let lineEntryIndex = 0; lineEntryIndex < lineEntries.length; lineEntryIndex += 1) {
-        const entry = lineEntries[lineEntryIndex];
-        const entryIndex = records.length;
-        const toolUse = entry.tool_use_id ? toolUses[entry.tool_use_id] : null;
-        const summary = createEntrySummary(entry, fileIndex, fileName, entryIndex, lineRef);
-        records.push({
-          source: "file",
-          file,
-          fileIndex,
-          fileName,
-          entryIndex,
-          lineRef,
-          toolUseLineRef: toolUse && toolUse.line_ref ? toolUse.line_ref : null,
-          toolUseId: entry.tool_use_id || "",
-          lineEntryOrdinal: lineEntryIndex,
-          summary,
-          estimatedBytes: Math.max(0, Number(lineRef.end || 0) - Number(lineRef.start || 0))
-        });
-        if (entry.tool_use_id && toolUse) {
-          consumedToolUseIds.push(entry.tool_use_id);
-        }
-      }
-
-      for (const toolUseId of consumedToolUseIds) {
-        delete toolUses[toolUseId];
-      }
-    }
-
-    function createMemoryEntryRecords(fileEntriesList) {
-      const records = [];
-      for (let fileIndex = 0; fileIndex < fileEntriesList.length; fileIndex += 1) {
-        const fileData = fileEntriesList[fileIndex];
-        for (const entry of fileData.entries) {
-          const entryIndex = records.length;
-          const summary = createEntrySummary(entry, fileIndex, fileData.name, entryIndex, null);
-          summary.anchor_id = entry.anchor_id || summary.anchor_id;
-          records.push({
-            source: "memory",
-            fileIndex,
-            fileName: fileData.name,
-            entryIndex,
-            entry,
-            summary,
-            estimatedBytes: JSON.stringify(entry).length
-          });
-        }
-      }
-      return records;
-    }
-
-    async function buildLargeFileIndex(files, loadToken) {
-      const records = [];
-      const toolUses = {};
-      let lastYieldAt = Date.now();
-
-      for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
-        const file = files[fileIndex];
-        const fileName = String(file.name || `file-${fileIndex + 1}.jsonl`);
-        const keepTextFallback = typeof file.slice !== "function";
-
-        for await (const lineInfo of iterateJsonlLines(file, loadToken)) {
-          throwIfCancelled(loadToken);
-
-          if (!lineInfo.text.trim()) {
-            continue;
-          }
-
-          let objectItem;
-          try {
-            objectItem = JSON.parse(lineInfo.text);
-          } catch (error) {
-            throw new Error(`Invalid JSON in ${fileName} on line ${lineInfo.lineNumber}: ${error.message}`);
-          }
-
-          buildEntryRecordsForObject(objectItem, {
-            file,
-            fileIndex,
-            fileName,
-            lineRef: createLineRef(file, lineInfo, keepTextFallback),
-            toolUses,
-            records
-          });
-
-          const now = Date.now();
-          if (now - lastYieldAt > 80 || records.length % 500 === 0) {
-            setStatus(`Indexing ${fileName}: ${formatByteCount(lineInfo.end)} / ${formatByteCount(file.size)}, ${records.length} entries...`);
-            lastYieldAt = now;
-            await sleep(0);
-          }
-        }
-
-        setStatus(`Indexed ${fileName}: ${records.length} entries...`);
-        await sleep(0);
-      }
-
-      return records;
-    }
-
-    function fallbackCopyText(text) {
-      const hasDomApi = typeof document !== "undefined"
-        && typeof document.createElement === "function"
-        && document.body
-        && typeof document.body.appendChild === "function"
-        && typeof document.body.removeChild === "function"
-        && typeof document.execCommand === "function";
-      if (!hasDomApi) {
-        return false;
-      }
-
-      const textarea = document.createElement("textarea");
-      textarea.value = text;
-      textarea.setAttribute("readonly", "");
-      textarea.style.position = "fixed";
-      textarea.style.top = "-2000px";
-      textarea.style.opacity = "0";
-      document.body.appendChild(textarea);
-      if (typeof textarea.select === "function") {
-        textarea.select();
-      }
-
-      let copied = false;
-      try {
-        copied = Boolean(document.execCommand("copy"));
-      } catch (_error) {
-        copied = false;
-      }
-
-      document.body.removeChild(textarea);
-      return copied;
-    }
-
-    async function copyTextToClipboard(text) {
-      const safeText = String(text || "");
-      const clipboard = navigator && navigator.clipboard;
-      if (clipboard && typeof clipboard.writeText === "function") {
-        try {
-          await clipboard.writeText(safeText);
-          return true;
-        } catch (_error) {
-          return fallbackCopyText(safeText);
-        }
-      }
-
-      return fallbackCopyText(safeText);
-    }
-
-    function createCopyButton(copyText, copyLabel = "Copy", extraClassName = "") {
-      const copyAriaLabel = String(copyLabel || "Copy");
-      const copyButton = document.createElement("button");
-      copyButton.type = "button";
-      copyButton.className = `panel-copy-btn ${extraClassName}`.trim();
-
-      const copyIcon = document.createElement("span");
-      copyIcon.className = "panel-copy-icon";
-      copyIcon.textContent = "content_copy";
-      copyIcon.setAttribute("aria-hidden", "true");
-      copyButton.appendChild(copyIcon);
-
-      copyButton.title = copyAriaLabel;
-      copyButton.setAttribute("aria-label", copyAriaLabel);
-      copyButton.addEventListener("click", async (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        const copied = await copyTextToClipboard(copyText);
-        if (copied) {
-          showCopyToast("Copied");
-          return;
-        }
-        showCopyToast("Copy failed");
-      });
-
-      return copyButton;
-    }
-
-    function createPanel(label, code, options = {}) {
-      const details = document.createElement("details");
-      const summary = document.createElement("summary");
-      const summaryLabel = toSingleLineText(label || "");
-      summary.textContent = summaryLabel;
-      const summaryPreviewText = toSingleLineText(options.summaryPreviewText || "");
-      if (summaryPreviewText) {
-        const preview = document.createElement("span");
-        preview.className = "summary-preview";
-        if (options.summaryPreviewVariant === "error") {
-          preview.classList.add("summary-preview-error");
-        }
-        preview.textContent = summaryLabel ? ` ${summaryPreviewText}` : summaryPreviewText;
-        summary.appendChild(preview);
-      }
-      if (Object.prototype.hasOwnProperty.call(options, "copyText")) {
-        summary.classList.add("summary-with-copy");
-        const copyButton = createCopyButton(options.copyText, options.copyLabel || "Copy");
-        summary.appendChild(copyButton);
-      }
-
-      const pre = document.createElement("pre");
-      pre.textContent = code;
-
-      details.appendChild(summary);
-      details.appendChild(pre);
-
-      return details;
-    }
-
-    function createMetaRow(entry) {
-      const meta = document.createElement("div");
-      meta.className = "m";
-
-      const badge = document.createElement("span");
-      badge.className = "b";
-      badge.textContent = entry.type || "";
-
-      meta.appendChild(badge);
-
-      if (entry.tool_duration_badge) {
-        const toolDurationBadge = document.createElement("span");
-        toolDurationBadge.className = "b tool-duration-badge";
-        toolDurationBadge.textContent = entry.tool_duration_badge;
-        meta.appendChild(toolDurationBadge);
-      }
-
-      const time = document.createElement("span");
-      time.className = "t";
-      time.textContent = entry.time || "";
-
-      meta.appendChild(time);
-
-      if (entry.copy_in_meta && entry.copy_text && !entry.error) {
-        const copyLabel = entry.type === "system" ? "Copy system message" : "Copy message";
-        meta.appendChild(createCopyButton(entry.copy_text, copyLabel, "meta-copy-btn"));
-      }
-
-      if (entry.error) {
-        const errorBadge = document.createElement("span");
-        errorBadge.className = "err";
-        errorBadge.textContent = "error";
-        meta.appendChild(errorBadge);
-      }
-
-      return meta;
-    }
-
-    function createMarkdownBlock(markdownText) {
-      const markdown = document.createElement("zero-md");
-      markdown.className = "txt";
-
-      const template = document.createElement("template");
-      template.setAttribute("data-merge", "append");
-      template.innerHTML = [
-        "<style>",
-        ".markdown-body{font-size:13px;color:var(--markdown-text);background:transparent}",
-        ".markdown-body,.markdown-body p,.markdown-body li,.markdown-body ul,.markdown-body ol{color:var(--markdown-text)}",
-        ".markdown-body h1,.markdown-body h2,.markdown-body h3,.markdown-body h4,.markdown-body h5,.markdown-body h6{color:var(--markdown-heading);border-bottom-color:var(--markdown-rule)}",
-        ".markdown-body a{color:var(--markdown-link)}",
-        ".markdown-body blockquote{color:var(--markdown-quote);border-left-color:var(--markdown-rule)}",
-        ".markdown-body hr{background:var(--markdown-rule)}",
-        ".markdown-body code{background:var(--markdown-inline-code-bg);color:var(--markdown-inline-code-text)}",
-        ".markdown-body pre{background:var(--markdown-code-bg);color:var(--markdown-code-text);border:1px solid var(--markdown-code-border)}",
-        ".markdown-body pre code{background:transparent;color:inherit;text-shadow:none}",
-        ".markdown-body pre code span{background:transparent;color:inherit !important;text-shadow:none}",
-        ".markdown-body table th,.markdown-body table td{border-color:var(--markdown-table-border)}",
-        ".markdown-body table tr{background:transparent}",
-        ".markdown-body table tr:nth-child(2n){background:var(--markdown-table-row-alt)}",
-        "</style>"
-      ].join("");
-
-      const script = document.createElement("script");
-      script.type = "text/markdown";
-      script.textContent = markdownText;
-
-      markdown.appendChild(template);
-      markdown.appendChild(script);
-
-      return markdown;
-    }
-
-    function createResultStatsBlock(statsItem) {
-      const stats = document.createElement("div");
-      stats.className = "stats";
-
-      const duration = document.createElement("span");
-      duration.textContent = `Duration: ${statsItem.duration}`;
-
-      const turns = document.createElement("span");
-      turns.textContent = `Turns: ${statsItem.turns}`;
-
-      const cost = document.createElement("span");
-      cost.textContent = `Total cost: ${statsItem.cost}$`;
-
-      stats.appendChild(duration);
-      stats.appendChild(turns);
-      stats.appendChild(cost);
-
-      return stats;
-    }
-
-    function createTodoList(todoItems) {
-      const list = document.createElement("div");
-      list.className = "todo-list";
-
-      for (const todo of todoItems) {
-        const item = document.createElement("div");
-        item.className = `todo-item ${todo.status || "pending"}`;
-        if (todo.status === "in_progress") {
-          item.classList.add("active");
-        }
-        if (todo.status === "completed") {
-          item.classList.add("completed");
-        }
-
-        const checkbox = document.createElement("input");
-        checkbox.type = "checkbox";
-        checkbox.className = "todo-item-checkbox";
-        checkbox.disabled = true;
-        checkbox.checked = todo.status === "completed";
-        checkbox.tabIndex = -1;
-
-        const text = document.createElement("span");
-        text.className = "todo-item-text";
-        text.textContent = String(todo.content || "");
-
-        item.appendChild(checkbox);
-        item.appendChild(text);
-        list.appendChild(item);
-      }
-
-      return list;
-    }
-
-    function appendToolEntry(card, entry) {
-      if (entry.tool_variant === "todowrite" && Array.isArray(entry.todos) && entry.todos.length > 0) {
-        card.appendChild(createTodoList(entry.todos));
-        return;
-      }
-
-      const requestPanel = createPanel(
-        entry.request_summary_label || entry.tool_name || "tool",
-        entry.request_json || "{}",
-        {
-          summaryPreviewText: entry.request_summary_preview || "",
-          copyText: entry.request_json || "{}",
-          copyLabel: "Copy request"
-        }
-      );
-      const resultPanel = createPanel(
-        entry.result_summary_label || "",
-        entry.result_json || "",
-        {
-          summaryPreviewText: entry.result_summary_preview || "",
-          summaryPreviewVariant: entry.result_summary_variant || "default",
-          copyText: entry.result_json || "",
-          copyLabel: "Copy result"
-        }
-      );
-
-      card.appendChild(requestPanel);
-      card.appendChild(resultPanel);
-    }
-
-    function appendRegularEntryParts(card, entry) {
-      for (const part of entry.parts || []) {
-        if (part.kind === "text") {
-          card.appendChild(createMarkdownBlock(part.text || ""));
-          continue;
-        }
-
-        if (part.kind === "result_stats") {
-          card.appendChild(createResultStatsBlock(part));
-          continue;
-        }
-
-        if (part.kind === "tool") {
-          card.appendChild(createPanel(`tool ${part.name || ""}`, part.json || ""));
-          continue;
-        }
-
-        if (part.kind === "result") {
-          card.appendChild(createPanel(`result ${part.name || ""}`, part.json || ""));
-          continue;
-        }
-
-        if (part.kind === "raw" && entry.type === "system") {
-          card.appendChild(createPanel(part.label || "raw", part.json || "", {
-            copyText: part.json || "",
-            copyLabel: "Copy system message"
-          }));
-          continue;
-        }
-
-        card.appendChild(createPanel(part.label || "raw", part.json || ""));
-      }
-    }
-
-    function openToolInputPanel(targetCard) {
-      if (!targetCard || !targetCard.classList || !targetCard.classList.contains("tool")) {
-        return;
-      }
-
-      const children = targetCard.children || [];
-      for (const child of children) {
-        if (!child || child.tagName !== "DETAILS") {
-          continue;
-        }
-
-        child.open = true;
-        return;
-      }
-    }
-
-    function resolveNavLabelParts(entry, labelText) {
-      if (!labelText) {
-        return [{ text: "", bold: false }];
-      }
-
-      if (entry.type === "tool" && entry.nav_label_variant === "bash-success") {
-        return [{ text: labelText, bold: false }];
-      }
-
-      if (entry.type === "system") {
-        return [{ text: labelText, bold: true }];
-      }
-
-      if (entry.type === "tool" && (entry.tool_name || "") === "Skill") {
-        return [{ text: labelText, bold: true }];
-      }
-
-      if (entry.type === "tool") {
-        if (!entry.error && !labelText.includes(":")) {
-          return [{ text: labelText, bold: true }];
-        }
-
-        const colonIndex = labelText.indexOf(":");
-        if (colonIndex > 0) {
-          return [
-            { text: labelText.slice(0, colonIndex + 1), bold: true },
-            { text: labelText.slice(colonIndex + 1), bold: false }
-          ];
-        }
-      }
-
-      return [{ text: labelText, bold: false }];
-    }
-
-    function renderNavLabel(textNode, entry, labelText) {
-      const labelParts = resolveNavLabelParts(entry, labelText);
-      const hasStrongPart = labelParts.some((labelPart) => labelPart.bold);
-      if (!hasStrongPart) {
-        textNode.textContent = labelText;
-        textNode._textContent = labelText;
-        return;
-      }
-
-      textNode.textContent = "";
-      for (const labelPart of labelParts) {
-        if (!labelPart.text) {
-          continue;
-        }
-
-        const partNode = document.createElement(labelPart.bold ? "strong" : "span");
-        if (labelPart.bold) {
-          partNode.className = "nav-text-strong";
-        }
-        partNode.textContent = labelPart.text;
-        textNode.appendChild(partNode);
-      }
-
-      if (textNode.childElementCount === 0) {
-        textNode.textContent = labelText;
-      }
-      textNode._textContent = labelText;
-    }
-
-    function createNavItem(entry, targetCard) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = `nav-item ${entry.cls || ""}`;
-      if (button.dataset) {
-        button.dataset.targetCardId = String(targetCard && targetCard.id ? targetCard.id : "");
-      }
-      if (entry.error) {
-        button.classList.add("error");
-        button.style.setProperty("--c", "var(--entry-error)");
-      }
-
-      const navTime = document.createElement("span");
-      navTime.className = "nav-time";
-      navTime.textContent = formatNavTime(entry.time || "");
-
-      const dot = document.createElement("span");
-      dot.className = "nav-dot";
-
-      const text = document.createElement("span");
-      text.className = "nav-text";
-      if (entry.nav_label_variant === "bash-success") {
-        text.classList.add("nav-text-terminal");
-      }
-      const navLabel = String(entry.nav_label || getTypeLabel(entry.type));
-      renderNavLabel(text, entry, navLabel);
-
-      button.appendChild(navTime);
-      button.appendChild(dot);
-      button.appendChild(text);
-      button.addEventListener("click", () => {
-        openToolInputPanel(targetCard);
-        markNavAutoScrolling();
-        targetCard.scrollIntoView({
-          block: "center",
-          behavior: "instant"
-        });
-        applyNavTargetHighlight(targetCard);
-      });
-
-      return button;
-    }
-
-    function applyDetailsOpenState(card, nextOpenState) {
-      if (typeof nextOpenState !== "boolean") {
-        return;
-      }
-
-      const detailsNodes = [];
-      collectHistoryDetailsNodes(card, detailsNodes);
-      for (const detailsNode of detailsNodes) {
-        detailsNode.open = nextOpenState;
-      }
-    }
-
-    function appendEntryCardBody(card, entry) {
-      card.appendChild(createMetaRow(entry));
-
-      if (entry.type === "tool") {
-        appendToolEntry(card, entry);
-        return;
-      }
-
-      appendRegularEntryParts(card, entry);
-    }
-
-    function createEntryCard(entry, options = {}) {
-      const card = document.createElement("div");
-      card.className = `e ${entry.cls || ""}`;
-      card.id = options.anchorId || entry.anchor_id || nextEntryAnchorId();
-
-      if (entry.error) {
-        card.style.setProperty("--c", "var(--entry-error)");
-      }
-
-      if (options.entryIndex !== undefined && card.dataset) {
-        card.dataset.entryIndex = String(options.entryIndex);
-      }
-
-      card.addEventListener("mouseenter", () => {
-        applyContentHoverNavItem(card);
-      });
-      card.addEventListener("mouseleave", () => {
-        clearContentHoverNavItem();
-      });
-
-      appendEntryCardBody(card, entry);
-      applyDetailsOpenState(card, options.detailsOpenState);
-      return card;
-    }
-
-    function renderEntries(entries, mountNode) {
-      const feed = document.createElement("div");
-      feed.className = "feed";
-
-      for (const entry of entries) {
-        const card = createEntryCard(entry);
-        feed.appendChild(card);
-        navListEl.appendChild(createNavItem(entry, card));
-      }
-
-      mountNode.appendChild(feed);
-      syncVisibleNavItemBorders();
     }
 
     function resolveViewportHeight(element, fallbackHeight = 900) {
@@ -2220,128 +728,6 @@ export function createJsonlViewerApp(deps = {}) {
       spacerEl.style.height = `${Math.max(0, Math.round(height))}px`;
     }
 
-    function calculateVirtualRange(totalItems, rowHeight, scrollTop, viewportHeight, overscanPx) {
-      if (totalItems <= 0) {
-        return { start: 0, end: 0 };
-      }
-
-      const safeRowHeight = Math.max(1, Number(rowHeight || 1));
-      const safeScrollTop = Math.max(0, Number(scrollTop || 0));
-      const safeViewportHeight = Math.max(1, Number(viewportHeight || 1));
-      const safeOverscanPx = Math.max(0, Number(overscanPx || 0));
-      const start = Math.max(0, Math.floor((safeScrollTop - safeOverscanPx) / safeRowHeight));
-      const end = Math.min(
-        totalItems,
-        Math.ceil((safeScrollTop + safeViewportHeight + safeOverscanPx) / safeRowHeight)
-      );
-
-      return { start, end: Math.max(start + 1, end) };
-    }
-
-    function createVirtualSpacer(className) {
-      const spacer = document.createElement("div");
-      spacer.className = className;
-      spacer.setAttribute("aria-hidden", "true");
-      return spacer;
-    }
-
-    function createVirtualCardShell(record) {
-      const entry = record.summary;
-      const card = document.createElement("div");
-      card.className = `e ${entry.cls || ""} virtual-entry-loading`;
-      card.id = entry.anchor_id || nextEntryAnchorId();
-      if (card.dataset) {
-        card.dataset.entryIndex = String(record.entryIndex);
-      }
-      if (entry.error) {
-        card.style.setProperty("--c", "var(--entry-error)");
-      }
-
-      card.addEventListener("mouseenter", () => {
-        applyContentHoverNavItem(card);
-      });
-      card.addEventListener("mouseleave", () => {
-        clearContentHoverNavItem();
-      });
-
-      card.appendChild(createMetaRow(entry));
-      const loading = document.createElement("pre");
-      loading.textContent = "Loading entry...";
-      card.appendChild(loading);
-      return card;
-    }
-
-    function cacheVirtualEntry(session, record, entry) {
-      if (!session || record.source === "memory") {
-        return;
-      }
-
-      const cacheKey = String(record.entryIndex);
-      if (session.entryCache.has(cacheKey)) {
-        const cached = session.entryCache.get(cacheKey);
-        session.cacheBytes -= cached.bytes;
-        session.entryCache.delete(cacheKey);
-      }
-
-      const bytes = Math.max(512, Number(record.estimatedBytes || 0));
-      session.entryCache.set(cacheKey, { entry, bytes });
-      session.cacheBytes += bytes;
-
-      while (
-        session.entryCache.size > lazyEntryCacheLimit
-        || session.cacheBytes > lazyEntryCacheByteLimit
-      ) {
-        const oldestKey = session.entryCache.keys().next().value;
-        if (oldestKey === undefined) {
-          break;
-        }
-        const oldest = session.entryCache.get(oldestKey);
-        session.cacheBytes -= oldest ? oldest.bytes : 0;
-        session.entryCache.delete(oldestKey);
-      }
-    }
-
-    async function loadEntryForRecord(record) {
-      if (record.source === "memory") {
-        return record.entry;
-      }
-
-      if (record.summary.type === "tool") {
-        const resultText = await readLineRef(record.lineRef);
-        const resultObject = JSON.parse(resultText);
-        const tempToolUses = {};
-
-        if (record.toolUseLineRef) {
-          const toolUseText = await readLineRef(record.toolUseLineRef);
-          const toolUseObject = JSON.parse(toolUseText);
-          Object.assign(tempToolUses, collectToolUses([toolUseObject]));
-        }
-
-        const entries = buildEntries([resultObject], tempToolUses);
-        const matchingEntry = entries.find((entry) => entry.tool_use_id === record.toolUseId)
-          || entries.find((entry) => entry.type === "tool")
-          || entries[0];
-
-        if (!matchingEntry) {
-          throw new Error("Indexed tool entry could not be reconstructed.");
-        }
-
-        matchingEntry.anchor_id = record.summary.anchor_id;
-        return matchingEntry;
-      }
-
-      const sourceText = await readLineRef(record.lineRef);
-      const sourceObject = JSON.parse(sourceText);
-      const entries = buildEntries([sourceObject], {});
-      const matchingEntry = entries[record.lineEntryOrdinal] || entries[0];
-      if (!matchingEntry) {
-        throw new Error("Indexed entry could not be reconstructed.");
-      }
-
-      matchingEntry.anchor_id = record.summary.anchor_id;
-      return matchingEntry;
-    }
-
     async function hydrateVirtualCard(session, record, card) {
       const cacheKey = String(record.entryIndex);
       try {
@@ -2353,8 +739,8 @@ export function createJsonlViewerApp(deps = {}) {
           entry = cached.entry;
         }
         if (!entry) {
-          entry = await loadEntryForRecord(record);
-          cacheVirtualEntry(session, record, entry);
+          entry = await loadEntryForRecord(record, { config });
+          cacheVirtualEntry(session, record, entry, config);
         }
 
         if (session !== activeVirtualSession || session.mountedCards.get(record.entryIndex) !== card) {
@@ -2429,47 +815,6 @@ export function createJsonlViewerApp(deps = {}) {
 
       syncVisibleNavItemBorders();
       return Promise.all(hydrationPromises).then(() => undefined);
-    }
-
-    function createVirtualNavItem(session, record) {
-      const entry = record.summary;
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = `nav-item ${entry.cls || ""}`;
-      if (button.dataset) {
-        button.dataset.targetCardId = String(entry.anchor_id || "");
-        button.dataset.entryIndex = String(record.entryIndex);
-      }
-      if (entry.error) {
-        button.classList.add("error");
-        button.style.setProperty("--c", "var(--entry-error)");
-      }
-
-      const navTime = document.createElement("span");
-      navTime.className = "nav-time";
-      navTime.textContent = formatNavTime(entry.time || "");
-
-      const dot = document.createElement("span");
-      dot.className = "nav-dot";
-
-      const text = document.createElement("span");
-      text.className = "nav-text";
-      if (entry.nav_label_variant === "bash-success") {
-        text.classList.add("nav-text-terminal");
-      }
-      renderNavLabel(text, entry, String(entry.nav_label || getTypeLabel(entry.type)));
-
-      button.appendChild(navTime);
-      button.appendChild(dot);
-      button.appendChild(text);
-      button.addEventListener("click", () => {
-        scrollVirtualContentToEntry(session, record.entryIndex, {
-          openTool: true,
-          highlight: true
-        });
-      });
-
-      return button;
     }
 
     function renderVirtualNavWindow(session) {
@@ -2620,7 +965,13 @@ export function createJsonlViewerApp(deps = {}) {
         const shouldStream = files.some((file) => Number(file.size || 0) > largeFileByteThreshold);
         if (shouldStream) {
           setStatus(`Indexing ${files.length} large file(s)...`);
-          const records = await buildLargeFileIndex(files, loadToken);
+          const records = await buildLargeFileIndex(files, {
+            loadToken,
+            config,
+            createAnchorId: nextEntryAnchorId,
+            setStatus,
+            setTimeout
+          });
           throwIfCancelled(loadToken);
           outputEl.textContent = "";
           navListEl.textContent = "";
@@ -2645,7 +996,7 @@ export function createJsonlViewerApp(deps = {}) {
           try {
             const text = await file.text();
             throwIfCancelled(loadToken);
-            fileResult.entries = parseJsonl(text);
+            fileResult.entries = parseJsonl(text, { config, createAnchorId: nextEntryAnchorId });
             totalEntries += fileResult.entries.length;
           } catch (error) {
             fileResult.error = error;
@@ -2657,7 +1008,10 @@ export function createJsonlViewerApp(deps = {}) {
         const canVirtualizeParsedFiles = parsedFiles.every((fileResult) => !fileResult.error)
           && totalEntries > largeEntryThreshold;
         if (canVirtualizeParsedFiles) {
-          const records = createMemoryEntryRecords(parsedFiles);
+          const records = createMemoryEntryRecords(parsedFiles, {
+            config,
+            createAnchorId: nextEntryAnchorId
+          });
           await createVirtualSession(files, records, { source: "memory" });
           throwIfCancelled(loadToken);
           syncUiState();
@@ -2803,6 +1157,39 @@ export function createJsonlViewerApp(deps = {}) {
       fileInput.value = "";
     }
 
+    function removeListener(target, type, handler, options) {
+      if (!target || typeof target.removeEventListener !== "function") {
+        return;
+      }
+
+      target.removeEventListener(type, handler, options);
+    }
+
+    function destroy() {
+      cancelActiveLoad();
+      clearCopyToastTimer();
+
+      removeListener(dropzone, "click", openFilePicker);
+      removeListener(dropzone, "keydown", onDropzoneKeydown);
+      removeListener(dropzone, "dragenter", markDragOver);
+      removeListener(dropzone, "dragover", markDragOver);
+      removeListener(dropzone, "dragleave", unmarkDragOver);
+      removeListener(dropzone, "drop", unmarkDragOver);
+      removeListener(dropzone, "drop", onDrop);
+      removeListener(fileInput, "change", onInputChange);
+      removeListener(clearBtn, "click", clearOutput);
+      removeListener(themeToggleBtn, "click", toggleTheme);
+      removeListener(collapseAllBtn, "click", collapseAllHistoryContent);
+      removeListener(expandAllBtn, "click", expandAllHistoryContent);
+      removeListener(navFocusPipEl, "click", toggleNavFocusMode);
+      removeListener(navFocusBackdropEl, "click", closeNavFocusMode);
+      removeListener(mainColumnEl, "scroll", clearNavTargetHighlightOnScroll);
+      removeListener(navColumnEl, "scroll", clearNavTargetHighlightOnScroll);
+      removeListener(document, "keydown", onDocumentKeydown);
+      removeListener(document, "click", onDocumentClick, true);
+      removeListener(window, "resize", onWindowResize);
+    }
+
     dropzone.addEventListener("click", openFilePicker);
     dropzone.addEventListener("keydown", onDropzoneKeydown);
 
@@ -2848,7 +1235,8 @@ export function createJsonlViewerApp(deps = {}) {
     navFocusPipIconEl,
     navFocusBackdropEl,
     mainColumnEl,
-    appEl
+    appEl,
+    destroy
   };
 }
 
