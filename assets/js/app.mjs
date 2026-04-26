@@ -79,6 +79,15 @@ export function createJsonlViewerApp(deps = {}) {
     const largeNavLabelMaxLength = Number.isFinite(deps.largeNavLabelMaxLength)
       ? Math.max(20, Number(deps.largeNavLabelMaxLength))
       : 240;
+    const toolSummaryInputPreviewMaxLength = Number.isFinite(deps.toolSummaryInputPreviewMaxLength)
+      ? Math.max(1, Number(deps.toolSummaryInputPreviewMaxLength))
+      : 90;
+    const toolSummaryResultPreviewMaxLength = Number.isFinite(deps.toolSummaryResultPreviewMaxLength)
+      ? Math.max(1, Number(deps.toolSummaryResultPreviewMaxLength))
+      : 110;
+    const toolSummaryErrorPreviewMaxLength = Number.isFinite(deps.toolSummaryErrorPreviewMaxLength)
+      ? Math.max(1, Number(deps.toolSummaryErrorPreviewMaxLength))
+      : 110;
     let entryCounter = 0;
     let activeNavTargetCard = null;
     let activeContentHoverNavItem = null;
@@ -1109,6 +1118,103 @@ export function createJsonlViewerApp(deps = {}) {
       return String(value).replace(/\s+/g, " ").trim();
     }
 
+    function truncateTextEnd(value, maxLength) {
+      const normalized = toSingleLineText(value);
+      const safeMaxLength = Math.max(1, Number(maxLength || 1));
+      if (normalized.length <= safeMaxLength) {
+        return normalized;
+      }
+
+      return `${normalized.slice(0, safeMaxLength)}...`;
+    }
+
+    function truncateTextStart(value, maxLength) {
+      const normalized = toSingleLineText(value);
+      const safeMaxLength = Math.max(1, Number(maxLength || 1));
+      if (normalized.length <= safeMaxLength) {
+        return normalized;
+      }
+
+      return `...${normalized.slice(-safeMaxLength)}`;
+    }
+
+    function normalizeSkillName(value) {
+      const normalized = toSingleLineText(value);
+      if (!normalized) {
+        return "";
+      }
+
+      if (normalized.startsWith("/")) {
+        return normalized;
+      }
+
+      return `/${normalized}`;
+    }
+
+    function serializeToolResultContent(toolResultContent) {
+      if (typeof toolResultContent === "string") {
+        return toolResultContent;
+      }
+
+      if (toolResultContent === null || toolResultContent === undefined) {
+        return "";
+      }
+
+      return prettyJson(toolResultContent);
+    }
+
+    function resolveToolRequestSummary(toolName, toolInput) {
+      const normalizedToolName = toSingleLineText(toolName) || "tool";
+      const input = toolInput && typeof toolInput === "object" ? toolInput : {};
+
+      if (normalizedToolName === "Skill") {
+        return {
+          label: "Skill",
+          preview: normalizeSkillName(input.skill)
+        };
+      }
+
+      if (normalizedToolName === "Read") {
+        return {
+          label: "Read",
+          preview: truncateTextStart(input.file_path, toolSummaryInputPreviewMaxLength)
+        };
+      }
+
+      if (normalizedToolName === "Grep") {
+        return {
+          label: "Grep",
+          preview: toSingleLineText(input.pattern)
+        };
+      }
+
+      if (normalizedToolName === "Bash") {
+        return {
+          label: "Bash",
+          preview: truncateTextEnd(input.command, toolSummaryInputPreviewMaxLength)
+        };
+      }
+
+      return {
+        label: normalizedToolName,
+        preview: ""
+      };
+    }
+
+    function resolveToolResultSummary(toolResultContent, isToolError) {
+      const maxLength = isToolError
+        ? toolSummaryErrorPreviewMaxLength
+        : toolSummaryResultPreviewMaxLength;
+      return {
+        label: "",
+        preview: truncateTextEnd(
+          serializeToolResultContent(toolResultContent),
+          maxLength
+        ),
+        variant: isToolError ? "error" : "default"
+      };
+    }
+
     function createResultCostLabel(value) {
       return `${round4(value)}$`;
     }
@@ -1153,8 +1259,8 @@ export function createJsonlViewerApp(deps = {}) {
       const input = toolInput && typeof toolInput === "object" ? toolInput : {};
 
       if (toolName === "Skill") {
-        const skillValue = input.skill;
-        return String(skillValue || safeFallback).trim() || safeFallback;
+        const skillValue = normalizeSkillName(input.skill);
+        return skillValue || String(safeFallback).trim() || safeFallback;
       }
 
       if (toolName === "Bash") {
@@ -1359,9 +1465,7 @@ export function createJsonlViewerApp(deps = {}) {
             toolUse.raw_time || "",
             itemRawTimestamp
           );
-          const resultJson = typeof toolResultItem.content === "string"
-            ? toolResultItem.content
-            : prettyJson(toolResultItem.content || "");
+          const resultJson = serializeToolResultContent(toolResultItem.content);
           const isToolError = Boolean(toolResultItem.is_error);
           const defaultToolNavLabel = resolveToolNavLabel(
             toolUse.name || "",
@@ -1376,6 +1480,14 @@ export function createJsonlViewerApp(deps = {}) {
           const bashSuccessNavLabel = resolveBashSuccessNavLabel(
             toolUse.name || "",
             toolUse.input || {},
+            isToolError
+          );
+          const requestSummary = resolveToolRequestSummary(
+            toolUse.name || toolUseId || "tool",
+            toolUse.input || {}
+          );
+          const resultSummary = resolveToolResultSummary(
+            toolResultItem.content,
             isToolError
           );
           const toolNavLabel = isToolError
@@ -1397,7 +1509,12 @@ export function createJsonlViewerApp(deps = {}) {
             error: isToolError,
             anchor_id: nextEntryAnchorId(),
             nav_label: toolNavLabel,
-            nav_label_variant: bashSuccessNavLabel ? "bash-success" : ""
+            nav_label_variant: bashSuccessNavLabel ? "bash-success" : "",
+            request_summary_label: requestSummary.label,
+            request_summary_preview: requestSummary.preview,
+            result_summary_label: resultSummary.label,
+            result_summary_preview: resultSummary.preview,
+            result_summary_variant: resultSummary.variant
           });
         }
       }
@@ -1675,7 +1792,18 @@ export function createJsonlViewerApp(deps = {}) {
     function createPanel(label, code, options = {}) {
       const details = document.createElement("details");
       const summary = document.createElement("summary");
-      summary.textContent = label;
+      const summaryLabel = toSingleLineText(label || "");
+      summary.textContent = summaryLabel;
+      const summaryPreviewText = toSingleLineText(options.summaryPreviewText || "");
+      if (summaryPreviewText) {
+        const preview = document.createElement("span");
+        preview.className = "summary-preview";
+        if (options.summaryPreviewVariant === "error") {
+          preview.classList.add("summary-preview-error");
+        }
+        preview.textContent = summaryLabel ? ` ${summaryPreviewText}` : summaryPreviewText;
+        summary.appendChild(preview);
+      }
       if (Object.prototype.hasOwnProperty.call(options, "copyText")) {
         summary.classList.add("summary-with-copy");
         const copyButton = createCopyButton(options.copyText, options.copyLabel || "Copy");
@@ -1822,14 +1950,25 @@ export function createJsonlViewerApp(deps = {}) {
         return;
       }
 
-      const requestPanel = createPanel(entry.tool_name || "tool", entry.request_json || "{}", {
-        copyText: entry.request_json || "{}",
-        copyLabel: "Copy request"
-      });
-      const resultPanel = createPanel("result", entry.result_json || "", {
-        copyText: entry.result_json || "",
-        copyLabel: "Copy result"
-      });
+      const requestPanel = createPanel(
+        entry.request_summary_label || entry.tool_name || "tool",
+        entry.request_json || "{}",
+        {
+          summaryPreviewText: entry.request_summary_preview || "",
+          copyText: entry.request_json || "{}",
+          copyLabel: "Copy request"
+        }
+      );
+      const resultPanel = createPanel(
+        entry.result_summary_label || "",
+        entry.result_json || "",
+        {
+          summaryPreviewText: entry.result_summary_preview || "",
+          summaryPreviewVariant: entry.result_summary_variant || "default",
+          copyText: entry.result_json || "",
+          copyLabel: "Copy result"
+        }
+      );
 
       card.appendChild(requestPanel);
       card.appendChild(resultPanel);

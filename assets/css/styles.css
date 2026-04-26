@@ -34,6 +34,8 @@
       --summary-bg: #f8fafc;
       --summary-text: #334155;
       --summary-caret: #94a3b8;
+      --summary-preview-text: #64748b;
+      --summary-preview-error-text: var(--danger-strong);
       --code-bg: #0f172a;
       --code-text: #dbe4f5;
       --code-border: #cbd5e1;
@@ -116,6 +118,8 @@
       --summary-bg: #16233a;
       --summary-text: #d3dced;
       --summary-caret: #9fb1cf;
+      --summary-preview-text: #9aa7bf;
+      --summary-preview-error-text: #fda4af;
       --code-bg: #030712;
       --code-text: #dbeafe;
       --code-border: #334155;
@@ -876,6 +880,15 @@
 
     .summary-with-copy {
       padding-right: 0.18rem;
+    }
+
+    .summary-preview {
+      color: var(--summary-preview-text);
+      font-weight: 520;
+    }
+
+    .summary-preview-error {
+      color: var(--summary-preview-error-text);
     }
 
     .panel-copy-btn {

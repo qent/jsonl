@@ -353,6 +353,10 @@ function createStreamingFile(name, text, chunkSize = 17) {
   };
 }
 
+function findChildByClass(element, className) {
+  return (element.children || []).find((child) => child.classList && child.classList.contains(className));
+}
+
 test('clear button stays hidden until something is rendered', () => {
   const api = createHarness();
 
@@ -690,6 +694,30 @@ test('successful Bash nav label keeps terminal font style without chip backgroun
   assert.doesNotMatch(terminalBlock, /padding:/);
 });
 
+test('tool summary preview styles define theme-aware default and error colors', () => {
+  const stylesCss = readStylesCss();
+  const rootBlockMatch = stylesCss.match(/:root\s*\{([\s\S]*?)\n\s*\}\n\n\s*\.app\[data-theme="dark"\]/);
+  const darkBlockMatch = stylesCss.match(/\.app\[data-theme="dark"\]\s*\{([\s\S]*?)\n\s*\}\n\n\s*\*/);
+  const previewBlockMatch = stylesCss.match(/\.summary-preview\s*\{([\s\S]*?)\n\s*\}/);
+  const previewErrorBlockMatch = stylesCss.match(/\.summary-preview-error\s*\{([\s\S]*?)\n\s*\}/);
+  assert.ok(rootBlockMatch, 'root theme block not found');
+  assert.ok(darkBlockMatch, 'dark theme block not found');
+  assert.ok(previewBlockMatch, 'summary preview block not found');
+  assert.ok(previewErrorBlockMatch, 'summary preview error block not found');
+
+  const rootBlock = rootBlockMatch[1];
+  const darkBlock = darkBlockMatch[1];
+  const previewBlock = previewBlockMatch[1];
+  const previewErrorBlock = previewErrorBlockMatch[1];
+
+  assert.match(rootBlock, /--summary-preview-text:\s*#64748b;/);
+  assert.match(rootBlock, /--summary-preview-error-text:\s*var\(--danger-strong\);/);
+  assert.match(darkBlock, /--summary-preview-text:\s*#9aa7bf;/);
+  assert.match(darkBlock, /--summary-preview-error-text:\s*#fda4af;/);
+  assert.match(previewBlock, /color:\s*var\(--summary-preview-text\);/);
+  assert.match(previewErrorBlock, /color:\s*var\(--summary-preview-error-text\);/);
+});
+
 test('navigation focus pip stays visually attached to the navigation column', () => {
   const stylesCss = readStylesCss();
   const html = readIndexHtml();
@@ -845,7 +873,7 @@ test('navigation labels follow block rules and highlight clears on document clic
     'policy_update',
     'hello world',
     'agent reply',
-    'Plan markdown',
+    '/Plan markdown',
     'echo 42',
     'Glob: **/*.mjs',
     'Grep: TODO',
@@ -863,7 +891,7 @@ test('navigation labels follow block rules and highlight clears on document clic
   assert.equal(systemNavText.children[0].tagName, 'STRONG');
   assert.equal(systemNavText.children[0].textContent, 'policy_update');
   assert.equal(skillNavText.children[0].tagName, 'STRONG');
-  assert.equal(skillNavText.children[0].textContent, 'Plan markdown');
+  assert.equal(skillNavText.children[0].textContent, '/Plan markdown');
   assert.equal(globNavText.children[0].tagName, 'STRONG');
   assert.equal(globNavText.children[0].textContent, 'Glob:');
   assert.equal(globNavText.children[1].textContent, ' **/*.mjs');
@@ -968,6 +996,141 @@ test('tool error navigation label renders one-line tool result content', async (
   assert.equal(navText.classList.contains('nav-text-terminal'), false);
 });
 
+test('tool panel summaries render contextual previews and truncation rules', async () => {
+  const api = createHarness();
+  const longReadPath = `/tmp/${'segment-'.repeat(12)}file.jsonl`;
+  const grepPattern = 'TODO\\s+items';
+  const longBashCommand = `printf "start" && ${'echo very-long-command-part '.repeat(5)}done`;
+  const longSuccessResult = `success output ${'x'.repeat(120)}`;
+  const longErrorResult = `line one\n${'error-token '.repeat(20)}`;
+  const jsonlObjects = [
+    {
+      type: 'assistant',
+      timestamp: '2026-04-24T12:20:00Z',
+      message: {
+        content: [{ type: 'tool_use', id: 'tool-summary-1', name: 'Skill', input: { skill: 'Plan markdown' } }]
+      }
+    },
+    {
+      type: 'user',
+      timestamp: '2026-04-24T12:20:01Z',
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: 'tool-summary-1', content: 'skill done' }]
+      }
+    },
+    {
+      type: 'assistant',
+      timestamp: '2026-04-24T12:20:02Z',
+      message: {
+        content: [{ type: 'tool_use', id: 'tool-summary-2', name: 'Read', input: { file_path: longReadPath } }]
+      }
+    },
+    {
+      type: 'user',
+      timestamp: '2026-04-24T12:20:03Z',
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: 'tool-summary-2', content: 'read ok' }]
+      }
+    },
+    {
+      type: 'assistant',
+      timestamp: '2026-04-24T12:20:04Z',
+      message: {
+        content: [{ type: 'tool_use', id: 'tool-summary-3', name: 'Grep', input: { pattern: grepPattern } }]
+      }
+    },
+    {
+      type: 'user',
+      timestamp: '2026-04-24T12:20:05Z',
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: 'tool-summary-3', content: 'grep ok' }]
+      }
+    },
+    {
+      type: 'assistant',
+      timestamp: '2026-04-24T12:20:06Z',
+      message: {
+        content: [{ type: 'tool_use', id: 'tool-summary-4', name: 'Bash', input: { command: longBashCommand } }]
+      }
+    },
+    {
+      type: 'user',
+      timestamp: '2026-04-24T12:20:07Z',
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: 'tool-summary-4', content: longSuccessResult }]
+      }
+    },
+    {
+      type: 'assistant',
+      timestamp: '2026-04-24T12:20:08Z',
+      message: {
+        content: [{ type: 'tool_use', id: 'tool-summary-5', name: 'Write', input: { file_path: '/tmp/out.jsonl' } }]
+      }
+    },
+    {
+      type: 'user',
+      timestamp: '2026-04-24T12:20:09Z',
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: 'tool-summary-5', content: longErrorResult, is_error: true }]
+      }
+    }
+  ];
+  const jsonl = jsonlObjects.map((objectItem) => JSON.stringify(objectItem)).join('\n');
+  const toSingleLine = (value) => String(value).replace(/\s+/g, ' ').trim();
+  const truncateEnd = (value, maxLength) => {
+    const normalized = toSingleLine(value);
+    return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;
+  };
+  const truncateStart = (value, maxLength) => {
+    const normalized = toSingleLine(value);
+    return normalized.length > maxLength ? `...${normalized.slice(-maxLength)}` : normalized;
+  };
+
+  await api.handleFiles([createFile('sample.jsonl', jsonl)]);
+
+  const fileSection = api.outputEl.children[0];
+  const feed = fileSection.children[1];
+  const cards = feed.children;
+  assert.equal(cards.length, 5);
+
+  const skillRequestSummary = cards[0].children[1].children[0];
+  const readRequestSummary = cards[1].children[1].children[0];
+  const grepRequestSummary = cards[2].children[1].children[0];
+  const bashRequestSummary = cards[3].children[1].children[0];
+  const bashResultSummary = cards[3].children[2].children[0];
+  const writeErrorResultSummary = cards[4].children[2].children[0];
+
+  const skillPreview = findChildByClass(skillRequestSummary, 'summary-preview');
+  const readPreview = findChildByClass(readRequestSummary, 'summary-preview');
+  const grepPreview = findChildByClass(grepRequestSummary, 'summary-preview');
+  const bashPreview = findChildByClass(bashRequestSummary, 'summary-preview');
+  const bashResultPreview = findChildByClass(bashResultSummary, 'summary-preview');
+  const writeErrorPreview = findChildByClass(writeErrorResultSummary, 'summary-preview');
+
+  assert.equal(skillRequestSummary.textContent, 'Skill');
+  assert.equal(readRequestSummary.textContent, 'Read');
+  assert.equal(grepRequestSummary.textContent, 'Grep');
+  assert.equal(bashRequestSummary.textContent, 'Bash');
+  assert.equal(bashResultSummary.textContent, '');
+  assert.equal(writeErrorResultSummary.textContent, '');
+
+  assert.ok(skillPreview, 'Skill preview should be present');
+  assert.ok(readPreview, 'Read preview should be present');
+  assert.ok(grepPreview, 'Grep preview should be present');
+  assert.ok(bashPreview, 'Bash preview should be present');
+  assert.ok(bashResultPreview, 'successful result preview should be present');
+  assert.ok(writeErrorPreview, 'error result preview should be present');
+
+  assert.equal(skillPreview.textContent, ' /Plan markdown');
+  assert.equal(readPreview.textContent, ` ${truncateStart(longReadPath, 90)}`);
+  assert.equal(grepPreview.textContent, ` ${toSingleLine(grepPattern)}`);
+  assert.equal(bashPreview.textContent, ` ${truncateEnd(longBashCommand, 90)}`);
+  assert.equal(bashResultPreview.textContent, truncateEnd(longSuccessResult, 110));
+  assert.equal(writeErrorPreview.textContent, truncateEnd(longErrorResult, 110));
+  assert.equal(writeErrorPreview.classList.contains('summary-preview-error'), true);
+  assert.equal(bashResultPreview.classList.contains('summary-preview-error'), false);
+});
+
 test('successful Bash nav label with colon stays non-bold and terminal-mono', async () => {
   const api = createHarness();
   const jsonlObjects = [
@@ -1056,9 +1219,19 @@ test('tool request and result panels expose copy icons and copy panel content', 
 
   const requestSummary = toolCard.children[1].children[0];
   const resultSummary = toolCard.children[2].children[0];
-  const requestCopyButton = requestSummary.children[0];
-  const resultCopyButton = resultSummary.children[0];
+  const requestCopyButton = findChildByClass(requestSummary, 'panel-copy-btn');
+  const resultCopyButton = findChildByClass(resultSummary, 'panel-copy-btn');
+  const requestPreview = findChildByClass(requestSummary, 'summary-preview');
+  const resultPreview = findChildByClass(resultSummary, 'summary-preview');
 
+  assert.ok(requestCopyButton, 'request copy button should be present');
+  assert.ok(resultCopyButton, 'result copy button should be present');
+  assert.ok(requestPreview, 'request preview should be present');
+  assert.ok(resultPreview, 'result preview should be present');
+  assert.equal(requestSummary.textContent, 'Bash');
+  assert.equal(resultSummary.textContent, '');
+  assert.equal(requestPreview.textContent, ' echo copy-me');
+  assert.equal(resultPreview.textContent, 'copy output');
   assert.equal(requestCopyButton.classList.contains('panel-copy-btn'), true);
   assert.equal(resultCopyButton.classList.contains('panel-copy-btn'), true);
   assert.equal(requestCopyButton.attributes['aria-label'], 'Copy request');
@@ -1462,7 +1635,7 @@ test('TodoWrite falls back to default tool panels when todos are empty or invali
     assert.equal(card.children[1].tagName, 'DETAILS');
     assert.equal(card.children[2].tagName, 'DETAILS');
     assert.equal(card.children[1].children[0].textContent, 'TodoWrite');
-    assert.equal(card.children[2].children[0].textContent, 'result');
+    assert.equal(card.children[2].children[0].textContent, '');
   }
 });
 
