@@ -49,12 +49,44 @@ export function createJsonlViewerApp(deps = {}) {
     const navContentHoverClassName = "content-hover-match";
     const themeStorageKey = "jsonl-viewer-theme";
     const navDesktopBreakpoint = 1120;
+    const largeFileByteThreshold = Number.isFinite(deps.largeFileByteThreshold)
+      ? Math.max(0, Number(deps.largeFileByteThreshold))
+      : 25 * 1024 * 1024;
+    const largeEntryThreshold = Number.isFinite(deps.largeEntryThreshold)
+      ? Math.max(1, Number(deps.largeEntryThreshold))
+      : 1500;
+    const streamChunkSize = Number.isFinite(deps.streamChunkSize)
+      ? Math.max(1024, Number(deps.streamChunkSize))
+      : 1024 * 1024;
+    const virtualEntryHeight = Number.isFinite(deps.virtualEntryHeight)
+      ? Math.max(64, Number(deps.virtualEntryHeight))
+      : 220;
+    const virtualNavRowHeight = Number.isFinite(deps.virtualNavRowHeight)
+      ? Math.max(20, Number(deps.virtualNavRowHeight))
+      : 30;
+    const virtualContentOverscanPx = Number.isFinite(deps.virtualContentOverscanPx)
+      ? Math.max(0, Number(deps.virtualContentOverscanPx))
+      : 1200;
+    const virtualNavOverscanRows = Number.isFinite(deps.virtualNavOverscanRows)
+      ? Math.max(0, Number(deps.virtualNavOverscanRows))
+      : 30;
+    const lazyEntryCacheLimit = Number.isFinite(deps.lazyEntryCacheLimit)
+      ? Math.max(1, Number(deps.lazyEntryCacheLimit))
+      : 120;
+    const lazyEntryCacheByteLimit = Number.isFinite(deps.lazyEntryCacheByteLimit)
+      ? Math.max(1024, Number(deps.lazyEntryCacheByteLimit))
+      : 32 * 1024 * 1024;
+    const largeNavLabelMaxLength = Number.isFinite(deps.largeNavLabelMaxLength)
+      ? Math.max(20, Number(deps.largeNavLabelMaxLength))
+      : 240;
     let entryCounter = 0;
     let activeNavTargetCard = null;
     let activeContentHoverNavItem = null;
     let isNavAutoScrolling = false;
     let isNavFocusActive = false;
     let copyToastTimer = null;
+    let activeLoadToken = null;
+    let activeVirtualSession = null;
 
     function readStoredTheme() {
       if (typeof localStorage === "undefined" || typeof localStorage.getItem !== "function") {
@@ -161,8 +193,31 @@ export function createJsonlViewerApp(deps = {}) {
       applyTheme(nextTheme);
     }
 
+    function collectNavItemElements(node, navItems = []) {
+      if (!node || !node.children) {
+        return navItems;
+      }
+
+      for (const child of node.children) {
+        if (!child) {
+          continue;
+        }
+        if (child.classList && child.classList.contains("nav-item")) {
+          navItems.push(child);
+          continue;
+        }
+        collectNavItemElements(child, navItems);
+      }
+
+      return navItems;
+    }
+
+    function getNavItemElements() {
+      return collectNavItemElements(navListEl, []);
+    }
+
     function syncNavVisibility() {
-      const hasNavEntries = navListEl.childElementCount > 0;
+      const hasNavEntries = getNavItemElements().length > 0;
       navColumnEl.hidden = !hasNavEntries;
       if (hasNavEntries) {
         appEl.classList.add("has-nav");
@@ -248,7 +303,7 @@ export function createJsonlViewerApp(deps = {}) {
         return null;
       }
 
-      const navItems = navListEl.children || [];
+      const navItems = getNavItemElements();
       for (const navItem of navItems) {
         if (!navItem || !navItem.dataset) {
           continue;
@@ -290,7 +345,7 @@ export function createJsonlViewerApp(deps = {}) {
     }
 
     function syncVisibleNavItemBorders() {
-      const navItems = navListEl.children || [];
+      const navItems = getNavItemElements();
       if (!navItems || navItems.length === 0) {
         return;
       }
@@ -432,6 +487,16 @@ export function createJsonlViewerApp(deps = {}) {
     }
 
     function setAllHistoryDetailsOpenState(nextOpenState) {
+      if (activeVirtualSession) {
+        const shouldOpenVirtual = Boolean(nextOpenState);
+        activeVirtualSession.detailsOpenState = shouldOpenVirtual;
+        const mountedCards = activeVirtualSession.mountedCards.values();
+        for (const card of mountedCards) {
+          applyDetailsOpenState(card, shouldOpenVirtual);
+        }
+        return;
+      }
+
       const detailsNodes = getHistoryDetailsNodes();
       if (detailsNodes.length === 0) {
         return;
@@ -447,8 +512,11 @@ export function createJsonlViewerApp(deps = {}) {
       const hasRenderedContent = typeof hasContent === "boolean"
         ? hasContent
         : outputEl.childElementCount > 0;
-      const detailsNodes = hasRenderedContent ? getHistoryDetailsNodes() : [];
-      const canToggleHistory = hasRenderedContent && detailsNodes.length > 0;
+      const canToggleVirtualHistory = Boolean(activeVirtualSession
+        && hasRenderedContent
+        && activeVirtualSession.records.some((record) => record.summary && record.summary.has_details));
+      const detailsNodes = hasRenderedContent && !canToggleVirtualHistory ? getHistoryDetailsNodes() : [];
+      const canToggleHistory = canToggleVirtualHistory || (hasRenderedContent && detailsNodes.length > 0);
 
       if (collapseAllBtn) {
         collapseAllBtn.hidden = !canToggleHistory;
@@ -530,6 +598,241 @@ export function createJsonlViewerApp(deps = {}) {
       copyToastTimer = setTimeout(() => {
         copyToastEl.classList.remove("visible");
       }, 1100);
+    }
+
+    function createLoadToken() {
+      if (activeLoadToken) {
+        activeLoadToken.cancelled = true;
+      }
+
+      activeLoadToken = { cancelled: false };
+      return activeLoadToken;
+    }
+
+    function cancelActiveLoad() {
+      if (activeLoadToken) {
+        activeLoadToken.cancelled = true;
+      }
+    }
+
+    function throwIfCancelled(loadToken) {
+      if (loadToken && loadToken.cancelled) {
+        const error = new Error("Loading cancelled");
+        error.name = "AbortError";
+        throw error;
+      }
+    }
+
+    function isCancelledError(error) {
+      return Boolean(error && error.name === "AbortError");
+    }
+
+    function sleep(ms = 0) {
+      return new Promise((resolve) => {
+        setTimeout(resolve, ms);
+      });
+    }
+
+    function formatByteCount(byteCount) {
+      const bytes = Number(byteCount || 0);
+      if (!Number.isFinite(bytes) || bytes <= 0) {
+        return "0 B";
+      }
+
+      const units = ["B", "KB", "MB", "GB", "TB"];
+      let value = bytes;
+      let unitIndex = 0;
+      while (value >= 1024 && unitIndex < units.length - 1) {
+        value /= 1024;
+        unitIndex += 1;
+      }
+
+      const precision = value >= 100 || unitIndex === 0 ? 0 : value >= 10 ? 1 : 2;
+      return `${value.toFixed(precision)} ${units[unitIndex]}`;
+    }
+
+    function concatBytes(parts, totalLength) {
+      if (parts.length === 1 && parts[0].length === totalLength) {
+        return parts[0];
+      }
+
+      const bytes = new Uint8Array(totalLength);
+      let offset = 0;
+      for (const part of parts) {
+        bytes.set(part, offset);
+        offset += part.length;
+      }
+      return bytes;
+    }
+
+    function createUtf8Decoder() {
+      if (typeof TextDecoder === "function") {
+        return new TextDecoder();
+      }
+
+      return {
+        decode(bytes) {
+          let text = "";
+          for (const byte of bytes) {
+            text += String.fromCharCode(byte);
+          }
+          return decodeURIComponent(escape(text));
+        }
+      };
+    }
+
+    function normalizeJsonLineText(lineText) {
+      return String(lineText || "").replace(/\r$/, "");
+    }
+
+    async function* iterateByteChunks(file, loadToken) {
+      if (file && typeof file.stream === "function") {
+        const stream = file.stream();
+        if (stream && typeof stream.getReader === "function") {
+          const reader = stream.getReader();
+          try {
+            while (true) {
+              throwIfCancelled(loadToken);
+              const result = await reader.read();
+              if (result.done) {
+                break;
+              }
+
+              const value = result.value;
+              if (!value || value.length === 0) {
+                continue;
+              }
+              yield value instanceof Uint8Array ? value : new Uint8Array(value);
+            }
+          } finally {
+            if (loadToken && loadToken.cancelled && typeof reader.cancel === "function") {
+              try {
+                await reader.cancel();
+              } catch (_error) {
+                // The reader may already be closed.
+              }
+            }
+          }
+          return;
+        }
+
+        if (stream && typeof stream[Symbol.asyncIterator] === "function") {
+          for await (const chunk of stream) {
+            throwIfCancelled(loadToken);
+            if (!chunk || chunk.length === 0) {
+              continue;
+            }
+            yield chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+          }
+          return;
+        }
+      }
+
+      if (file && typeof file.slice === "function") {
+        const fileSize = Math.max(0, Number(file.size || 0));
+        for (let start = 0; start < fileSize; start += streamChunkSize) {
+          throwIfCancelled(loadToken);
+          const end = Math.min(fileSize, start + streamChunkSize);
+          const slice = file.slice(start, end);
+          let arrayBuffer;
+          if (slice && typeof slice.arrayBuffer === "function") {
+            arrayBuffer = await slice.arrayBuffer();
+          } else if (slice && typeof slice.text === "function") {
+            const text = await slice.text();
+            arrayBuffer = new TextEncoder().encode(text).buffer;
+          } else {
+            throw new Error("Unable to read file chunks in this browser.");
+          }
+          yield new Uint8Array(arrayBuffer);
+        }
+        return;
+      }
+
+      throw new Error("This browser does not support chunked file reads.");
+    }
+
+    async function* iterateJsonlLines(file, loadToken) {
+      const decoder = createUtf8Decoder();
+      let pendingParts = [];
+      let pendingLength = 0;
+      let byteOffset = 0;
+      let lineStartOffset = 0;
+      let lineNumber = 1;
+
+      for await (const chunk of iterateByteChunks(file, loadToken)) {
+        let segmentStartIndex = 0;
+
+        for (let index = 0; index < chunk.length; index += 1) {
+          if (chunk[index] !== 10) {
+            continue;
+          }
+
+          const segment = chunk.slice(segmentStartIndex, index);
+          if (segment.length > 0) {
+            pendingParts.push(segment);
+            pendingLength += segment.length;
+          }
+
+          const lineBytes = concatBytes(pendingParts, pendingLength);
+          const lineText = normalizeJsonLineText(decoder.decode(lineBytes));
+          yield {
+            text: lineText,
+            start: lineStartOffset,
+            end: byteOffset + index,
+            lineNumber
+          };
+
+          pendingParts = [];
+          pendingLength = 0;
+          lineNumber += 1;
+          segmentStartIndex = index + 1;
+          lineStartOffset = byteOffset + index + 1;
+        }
+
+        const rest = chunk.slice(segmentStartIndex);
+        if (rest.length > 0) {
+          pendingParts.push(rest);
+          pendingLength += rest.length;
+        }
+
+        byteOffset += chunk.length;
+      }
+
+      if (pendingLength > 0 || lineStartOffset < byteOffset) {
+        const lineBytes = concatBytes(pendingParts, pendingLength);
+        const lineText = normalizeJsonLineText(decoder.decode(lineBytes));
+        yield {
+          text: lineText,
+          start: lineStartOffset,
+          end: byteOffset,
+          lineNumber
+        };
+      }
+    }
+
+    async function readLineRef(lineRef) {
+      if (!lineRef) {
+        return "";
+      }
+      if (typeof lineRef.text === "string") {
+        return lineRef.text;
+      }
+
+      const file = lineRef.file;
+      if (!file || typeof file.slice !== "function") {
+        throw new Error("Unable to read indexed line because file slicing is unavailable.");
+      }
+
+      const slice = file.slice(lineRef.start, lineRef.end);
+      if (slice && typeof slice.text === "function") {
+        return normalizeJsonLineText(await slice.text());
+      }
+      if (slice && typeof slice.arrayBuffer === "function") {
+        const bytes = new Uint8Array(await slice.arrayBuffer());
+        return normalizeJsonLineText(createUtf8Decoder().decode(bytes));
+      }
+
+      throw new Error("Unable to read indexed line.");
     }
 
     function clearNavTargetHighlight() {
@@ -661,7 +964,11 @@ export function createJsonlViewerApp(deps = {}) {
 
     function clearNavTargetHighlightOnScroll(event) {
       if (event && event.currentTarget === mainColumnEl) {
+        renderVirtualContentWindow(activeVirtualSession);
         syncVisibleNavItemBorders();
+      }
+      if (event && event.currentTarget === navColumnEl) {
+        renderVirtualNavWindow(activeVirtualSession);
       }
       if (isNavAutoScrolling) {
         return;
@@ -1085,6 +1392,7 @@ export function createJsonlViewerApp(deps = {}) {
             result_json: resultJson,
             tool_duration_badge: toolDurationBadge,
             tool_variant: isTodoWriteEntry ? "todowrite" : "",
+            tool_use_id: toolUseId,
             todos: normalizedTodos,
             error: isToolError,
             anchor_id: nextEntryAnchorId(),
@@ -1101,6 +1409,191 @@ export function createJsonlViewerApp(deps = {}) {
       const objects = parseJsonLines(text);
       const toolUses = collectToolUses(objects);
       return buildEntries(objects, toolUses);
+    }
+
+    function truncateNavLabel(labelText) {
+      const label = String(labelText || "");
+      if (label.length <= largeNavLabelMaxLength) {
+        return label;
+      }
+
+      return `${label.slice(0, largeNavLabelMaxLength - 1)}…`;
+    }
+
+    function entryHasDetails(entry) {
+      if (!entry || entry.type === "tool") {
+        return Boolean(entry && entry.type === "tool");
+      }
+
+      return (entry.parts || []).some((part) => part && (part.kind === "raw" || part.kind === "tool" || part.kind === "result"));
+    }
+
+    function createEntrySummary(entry, fileIndex, fileName, entryIndex, lineRef) {
+      return {
+        type: entry.type || "",
+        cls: entry.cls || "",
+        time: entry.time || "",
+        tool_name: entry.tool_name || "",
+        tool_duration_badge: entry.tool_duration_badge || "",
+        tool_variant: entry.tool_variant || "",
+        error: Boolean(entry.error),
+        nav_label: truncateNavLabel(entry.nav_label || getTypeLabel(entry.type)),
+        nav_label_variant: entry.nav_label_variant || "",
+        anchor_id: entry.anchor_id || nextEntryAnchorId(),
+        tool_use_id: entry.tool_use_id || "",
+        has_details: entryHasDetails(entry),
+        file_index: fileIndex,
+        file_name: fileName,
+        entry_index: entryIndex,
+        line_number: lineRef ? lineRef.lineNumber : 0
+      };
+    }
+
+    function collectToolUsesFromObject(objectItem, lineRef, toolUses) {
+      const message = objectItem.message || {};
+      const content = message.content;
+      if (!Array.isArray(content)) {
+        return;
+      }
+
+      const rawTimestamp = String(objectItem.timestamp || "");
+      const timestamp = formatTimestamp(rawTimestamp);
+
+      for (const contentItem of content) {
+        if (!contentItem || contentItem.type !== "tool_use" || !contentItem.id) {
+          continue;
+        }
+
+        toolUses[contentItem.id] = {
+          name: contentItem.name,
+          time: timestamp,
+          raw_time: rawTimestamp,
+          json: prettyJson(contentItem.input || {}),
+          input: contentItem.input || {},
+          line_ref: lineRef
+        };
+      }
+    }
+
+    function createLineRef(file, lineInfo, keepTextFallback) {
+      return {
+        file,
+        start: lineInfo.start,
+        end: lineInfo.end,
+        lineNumber: lineInfo.lineNumber,
+        text: keepTextFallback ? lineInfo.text : undefined
+      };
+    }
+
+    function buildEntryRecordsForObject(objectItem, options) {
+      const {
+        file,
+        fileIndex,
+        fileName,
+        lineRef,
+        toolUses,
+        records
+      } = options;
+
+      collectToolUsesFromObject(objectItem, lineRef, toolUses);
+      const lineEntries = buildEntries([objectItem], toolUses);
+      const consumedToolUseIds = [];
+      for (let lineEntryIndex = 0; lineEntryIndex < lineEntries.length; lineEntryIndex += 1) {
+        const entry = lineEntries[lineEntryIndex];
+        const entryIndex = records.length;
+        const toolUse = entry.tool_use_id ? toolUses[entry.tool_use_id] : null;
+        const summary = createEntrySummary(entry, fileIndex, fileName, entryIndex, lineRef);
+        records.push({
+          source: "file",
+          file,
+          fileIndex,
+          fileName,
+          entryIndex,
+          lineRef,
+          toolUseLineRef: toolUse && toolUse.line_ref ? toolUse.line_ref : null,
+          toolUseId: entry.tool_use_id || "",
+          lineEntryOrdinal: lineEntryIndex,
+          summary,
+          estimatedBytes: Math.max(0, Number(lineRef.end || 0) - Number(lineRef.start || 0))
+        });
+        if (entry.tool_use_id && toolUse) {
+          consumedToolUseIds.push(entry.tool_use_id);
+        }
+      }
+
+      for (const toolUseId of consumedToolUseIds) {
+        delete toolUses[toolUseId];
+      }
+    }
+
+    function createMemoryEntryRecords(fileEntriesList) {
+      const records = [];
+      for (let fileIndex = 0; fileIndex < fileEntriesList.length; fileIndex += 1) {
+        const fileData = fileEntriesList[fileIndex];
+        for (const entry of fileData.entries) {
+          const entryIndex = records.length;
+          const summary = createEntrySummary(entry, fileIndex, fileData.name, entryIndex, null);
+          summary.anchor_id = entry.anchor_id || summary.anchor_id;
+          records.push({
+            source: "memory",
+            fileIndex,
+            fileName: fileData.name,
+            entryIndex,
+            entry,
+            summary,
+            estimatedBytes: JSON.stringify(entry).length
+          });
+        }
+      }
+      return records;
+    }
+
+    async function buildLargeFileIndex(files, loadToken) {
+      const records = [];
+      const toolUses = {};
+      let lastYieldAt = Date.now();
+
+      for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
+        const file = files[fileIndex];
+        const fileName = String(file.name || `file-${fileIndex + 1}.jsonl`);
+        const keepTextFallback = typeof file.slice !== "function";
+
+        for await (const lineInfo of iterateJsonlLines(file, loadToken)) {
+          throwIfCancelled(loadToken);
+
+          if (!lineInfo.text.trim()) {
+            continue;
+          }
+
+          let objectItem;
+          try {
+            objectItem = JSON.parse(lineInfo.text);
+          } catch (error) {
+            throw new Error(`Invalid JSON in ${fileName} on line ${lineInfo.lineNumber}: ${error.message}`);
+          }
+
+          buildEntryRecordsForObject(objectItem, {
+            file,
+            fileIndex,
+            fileName,
+            lineRef: createLineRef(file, lineInfo, keepTextFallback),
+            toolUses,
+            records
+          });
+
+          const now = Date.now();
+          if (now - lastYieldAt > 80 || records.length % 500 === 0) {
+            setStatus(`Indexing ${fileName}: ${formatByteCount(lineInfo.end)} / ${formatByteCount(file.size)}, ${records.length} entries...`);
+            lastYieldAt = now;
+            await sleep(0);
+          }
+        }
+
+        setStatus(`Indexed ${fileName}: ${records.length} entries...`);
+        await sleep(0);
+      }
+
+      return records;
     }
 
     function fallbackCopyText(text) {
@@ -1498,34 +1991,60 @@ export function createJsonlViewerApp(deps = {}) {
       return button;
     }
 
+    function applyDetailsOpenState(card, nextOpenState) {
+      if (typeof nextOpenState !== "boolean") {
+        return;
+      }
+
+      const detailsNodes = [];
+      collectHistoryDetailsNodes(card, detailsNodes);
+      for (const detailsNode of detailsNodes) {
+        detailsNode.open = nextOpenState;
+      }
+    }
+
+    function appendEntryCardBody(card, entry) {
+      card.appendChild(createMetaRow(entry));
+
+      if (entry.type === "tool") {
+        appendToolEntry(card, entry);
+        return;
+      }
+
+      appendRegularEntryParts(card, entry);
+    }
+
+    function createEntryCard(entry, options = {}) {
+      const card = document.createElement("div");
+      card.className = `e ${entry.cls || ""}`;
+      card.id = options.anchorId || entry.anchor_id || nextEntryAnchorId();
+
+      if (entry.error) {
+        card.style.setProperty("--c", "var(--entry-error)");
+      }
+
+      if (options.entryIndex !== undefined && card.dataset) {
+        card.dataset.entryIndex = String(options.entryIndex);
+      }
+
+      card.addEventListener("mouseenter", () => {
+        applyContentHoverNavItem(card);
+      });
+      card.addEventListener("mouseleave", () => {
+        clearContentHoverNavItem();
+      });
+
+      appendEntryCardBody(card, entry);
+      applyDetailsOpenState(card, options.detailsOpenState);
+      return card;
+    }
+
     function renderEntries(entries, mountNode) {
       const feed = document.createElement("div");
       feed.className = "feed";
 
       for (const entry of entries) {
-        const card = document.createElement("div");
-        card.className = `e ${entry.cls || ""}`;
-        card.id = entry.anchor_id || nextEntryAnchorId();
-
-        if (entry.error) {
-          card.style.setProperty("--c", "var(--entry-error)");
-        }
-
-        card.addEventListener("mouseenter", () => {
-          applyContentHoverNavItem(card);
-        });
-        card.addEventListener("mouseleave", () => {
-          clearContentHoverNavItem();
-        });
-
-        card.appendChild(createMetaRow(entry));
-
-        if (entry.type === "tool") {
-          appendToolEntry(card, entry);
-        } else {
-          appendRegularEntryParts(card, entry);
-        }
-
+        const card = createEntryCard(entry);
         feed.appendChild(card);
         navListEl.appendChild(createNavItem(entry, card));
       }
@@ -1534,54 +2053,541 @@ export function createJsonlViewerApp(deps = {}) {
       syncVisibleNavItemBorders();
     }
 
+    function resolveViewportHeight(element, fallbackHeight = 900) {
+      const clientHeight = Number(element && element.clientHeight);
+      if (Number.isFinite(clientHeight) && clientHeight > 0) {
+        return clientHeight;
+      }
+
+      if (element && typeof element.getBoundingClientRect === "function") {
+        const rect = element.getBoundingClientRect();
+        if (rect && Number.isFinite(rect.height) && rect.height > 0) {
+          return rect.height;
+        }
+      }
+
+      if (typeof window !== "undefined" && Number.isFinite(window.innerHeight) && window.innerHeight > 0) {
+        return window.innerHeight;
+      }
+
+      return fallbackHeight;
+    }
+
+    function setSpacerHeight(spacerEl, height) {
+      if (!spacerEl || !spacerEl.style) {
+        return;
+      }
+
+      spacerEl.style.height = `${Math.max(0, Math.round(height))}px`;
+    }
+
+    function calculateVirtualRange(totalItems, rowHeight, scrollTop, viewportHeight, overscanPx) {
+      if (totalItems <= 0) {
+        return { start: 0, end: 0 };
+      }
+
+      const safeRowHeight = Math.max(1, Number(rowHeight || 1));
+      const safeScrollTop = Math.max(0, Number(scrollTop || 0));
+      const safeViewportHeight = Math.max(1, Number(viewportHeight || 1));
+      const safeOverscanPx = Math.max(0, Number(overscanPx || 0));
+      const start = Math.max(0, Math.floor((safeScrollTop - safeOverscanPx) / safeRowHeight));
+      const end = Math.min(
+        totalItems,
+        Math.ceil((safeScrollTop + safeViewportHeight + safeOverscanPx) / safeRowHeight)
+      );
+
+      return { start, end: Math.max(start + 1, end) };
+    }
+
+    function createVirtualSpacer(className) {
+      const spacer = document.createElement("div");
+      spacer.className = className;
+      spacer.setAttribute("aria-hidden", "true");
+      return spacer;
+    }
+
+    function createVirtualCardShell(record) {
+      const entry = record.summary;
+      const card = document.createElement("div");
+      card.className = `e ${entry.cls || ""} virtual-entry-loading`;
+      card.id = entry.anchor_id || nextEntryAnchorId();
+      if (card.dataset) {
+        card.dataset.entryIndex = String(record.entryIndex);
+      }
+      if (entry.error) {
+        card.style.setProperty("--c", "var(--entry-error)");
+      }
+
+      card.addEventListener("mouseenter", () => {
+        applyContentHoverNavItem(card);
+      });
+      card.addEventListener("mouseleave", () => {
+        clearContentHoverNavItem();
+      });
+
+      card.appendChild(createMetaRow(entry));
+      const loading = document.createElement("pre");
+      loading.textContent = "Loading entry...";
+      card.appendChild(loading);
+      return card;
+    }
+
+    function cacheVirtualEntry(session, record, entry) {
+      if (!session || record.source === "memory") {
+        return;
+      }
+
+      const cacheKey = String(record.entryIndex);
+      if (session.entryCache.has(cacheKey)) {
+        const cached = session.entryCache.get(cacheKey);
+        session.cacheBytes -= cached.bytes;
+        session.entryCache.delete(cacheKey);
+      }
+
+      const bytes = Math.max(512, Number(record.estimatedBytes || 0));
+      session.entryCache.set(cacheKey, { entry, bytes });
+      session.cacheBytes += bytes;
+
+      while (
+        session.entryCache.size > lazyEntryCacheLimit
+        || session.cacheBytes > lazyEntryCacheByteLimit
+      ) {
+        const oldestKey = session.entryCache.keys().next().value;
+        if (oldestKey === undefined) {
+          break;
+        }
+        const oldest = session.entryCache.get(oldestKey);
+        session.cacheBytes -= oldest ? oldest.bytes : 0;
+        session.entryCache.delete(oldestKey);
+      }
+    }
+
+    async function loadEntryForRecord(record) {
+      if (record.source === "memory") {
+        return record.entry;
+      }
+
+      if (record.summary.type === "tool") {
+        const resultText = await readLineRef(record.lineRef);
+        const resultObject = JSON.parse(resultText);
+        const tempToolUses = {};
+
+        if (record.toolUseLineRef) {
+          const toolUseText = await readLineRef(record.toolUseLineRef);
+          const toolUseObject = JSON.parse(toolUseText);
+          Object.assign(tempToolUses, collectToolUses([toolUseObject]));
+        }
+
+        const entries = buildEntries([resultObject], tempToolUses);
+        const matchingEntry = entries.find((entry) => entry.tool_use_id === record.toolUseId)
+          || entries.find((entry) => entry.type === "tool")
+          || entries[0];
+
+        if (!matchingEntry) {
+          throw new Error("Indexed tool entry could not be reconstructed.");
+        }
+
+        matchingEntry.anchor_id = record.summary.anchor_id;
+        return matchingEntry;
+      }
+
+      const sourceText = await readLineRef(record.lineRef);
+      const sourceObject = JSON.parse(sourceText);
+      const entries = buildEntries([sourceObject], {});
+      const matchingEntry = entries[record.lineEntryOrdinal] || entries[0];
+      if (!matchingEntry) {
+        throw new Error("Indexed entry could not be reconstructed.");
+      }
+
+      matchingEntry.anchor_id = record.summary.anchor_id;
+      return matchingEntry;
+    }
+
+    async function hydrateVirtualCard(session, record, card) {
+      const cacheKey = String(record.entryIndex);
+      try {
+        let entry = record.entry;
+        if (!entry && session.entryCache.has(cacheKey)) {
+          const cached = session.entryCache.get(cacheKey);
+          session.entryCache.delete(cacheKey);
+          session.entryCache.set(cacheKey, cached);
+          entry = cached.entry;
+        }
+        if (!entry) {
+          entry = await loadEntryForRecord(record);
+          cacheVirtualEntry(session, record, entry);
+        }
+
+        if (session !== activeVirtualSession || session.mountedCards.get(record.entryIndex) !== card) {
+          return;
+        }
+
+        card.textContent = "";
+        card.className = `e ${entry.cls || ""}`;
+        card.id = record.summary.anchor_id;
+        if (card.dataset) {
+          card.dataset.entryIndex = String(record.entryIndex);
+        }
+        if (entry.error) {
+          card.style.setProperty("--c", "var(--entry-error)");
+        }
+        appendEntryCardBody(card, entry);
+        applyDetailsOpenState(card, session.detailsOpenState);
+
+        if (record.pendingOpenTool) {
+          openToolInputPanel(card);
+          record.pendingOpenTool = false;
+        }
+        if (record.pendingHighlight) {
+          applyNavTargetHighlight(card);
+          record.pendingHighlight = false;
+        }
+      } catch (error) {
+        if (session !== activeVirtualSession || session.mountedCards.get(record.entryIndex) !== card) {
+          return;
+        }
+        card.textContent = "";
+        card.appendChild(createMetaRow(record.summary));
+        const pre = document.createElement("pre");
+        pre.textContent = String(error && error.message ? error.message : error);
+        card.appendChild(pre);
+      }
+    }
+
+    function renderVirtualContentWindow(session) {
+      if (!session || session !== activeVirtualSession) {
+        return Promise.resolve();
+      }
+
+      const viewportHeight = resolveViewportHeight(mainColumnEl);
+      const range = calculateVirtualRange(
+        session.records.length,
+        virtualEntryHeight,
+        mainColumnEl.scrollTop,
+        viewportHeight,
+        virtualContentOverscanPx
+      );
+
+      if (range.start === session.contentStart && range.end === session.contentEnd) {
+        return Promise.resolve();
+      }
+
+      session.contentStart = range.start;
+      session.contentEnd = range.end;
+      session.contentItemsEl.textContent = "";
+      session.mountedCards.clear();
+      setSpacerHeight(session.contentTopSpacerEl, range.start * virtualEntryHeight);
+      setSpacerHeight(session.contentBottomSpacerEl, (session.records.length - range.end) * virtualEntryHeight);
+
+      const hydrationPromises = [];
+      for (let index = range.start; index < range.end; index += 1) {
+        const record = session.records[index];
+        const card = createVirtualCardShell(record);
+        session.mountedCards.set(index, card);
+        session.contentItemsEl.appendChild(card);
+        hydrationPromises.push(hydrateVirtualCard(session, record, card));
+      }
+
+      syncVisibleNavItemBorders();
+      return Promise.all(hydrationPromises).then(() => undefined);
+    }
+
+    function createVirtualNavItem(session, record) {
+      const entry = record.summary;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `nav-item ${entry.cls || ""}`;
+      if (button.dataset) {
+        button.dataset.targetCardId = String(entry.anchor_id || "");
+        button.dataset.entryIndex = String(record.entryIndex);
+      }
+      if (entry.error) {
+        button.classList.add("error");
+        button.style.setProperty("--c", "var(--entry-error)");
+      }
+
+      const navTime = document.createElement("span");
+      navTime.className = "nav-time";
+      navTime.textContent = formatNavTime(entry.time || "");
+
+      const dot = document.createElement("span");
+      dot.className = "nav-dot";
+
+      const text = document.createElement("span");
+      text.className = "nav-text";
+      if (entry.nav_label_variant === "bash-success") {
+        text.classList.add("nav-text-terminal");
+      }
+      renderNavLabel(text, entry, String(entry.nav_label || getTypeLabel(entry.type)));
+
+      button.appendChild(navTime);
+      button.appendChild(dot);
+      button.appendChild(text);
+      button.addEventListener("click", () => {
+        scrollVirtualContentToEntry(session, record.entryIndex, {
+          openTool: true,
+          highlight: true
+        });
+      });
+
+      return button;
+    }
+
+    function renderVirtualNavWindow(session) {
+      if (!session || session !== activeVirtualSession) {
+        return;
+      }
+
+      const viewportHeight = resolveViewportHeight(navColumnEl);
+      const overscanPx = virtualNavOverscanRows * virtualNavRowHeight;
+      const range = calculateVirtualRange(
+        session.records.length,
+        virtualNavRowHeight,
+        navColumnEl.scrollTop,
+        viewportHeight,
+        overscanPx
+      );
+
+      if (range.start === session.navStart && range.end === session.navEnd) {
+        return;
+      }
+
+      session.navStart = range.start;
+      session.navEnd = range.end;
+      session.navItemsEl.textContent = "";
+      setSpacerHeight(session.navTopSpacerEl, range.start * virtualNavRowHeight);
+      setSpacerHeight(session.navBottomSpacerEl, (session.records.length - range.end) * virtualNavRowHeight);
+
+      for (let index = range.start; index < range.end; index += 1) {
+        session.navItemsEl.appendChild(createVirtualNavItem(session, session.records[index]));
+      }
+    }
+
+    function scrollVirtualContentToEntry(session, entryIndex, options = {}) {
+      if (!session || session !== activeVirtualSession) {
+        return;
+      }
+
+      const record = session.records[entryIndex];
+      if (!record) {
+        return;
+      }
+
+      record.pendingOpenTool = Boolean(options.openTool);
+      record.pendingHighlight = Boolean(options.highlight);
+      const viewportHeight = resolveViewportHeight(mainColumnEl);
+      mainColumnEl.scrollTop = Math.max(0, (entryIndex * virtualEntryHeight) - (viewportHeight / 2));
+      markNavAutoScrolling();
+      renderVirtualContentWindow(session).then(() => {
+        const card = session.mountedCards.get(entryIndex);
+        if (!card) {
+          return;
+        }
+        if (options.openTool) {
+          openToolInputPanel(card);
+        }
+        if (options.highlight) {
+          applyNavTargetHighlight(card);
+        }
+      });
+    }
+
+    function createVirtualSession(files, records, options = {}) {
+      const section = document.createElement("section");
+      section.className = "file-block virtual-file-block";
+
+      const title = document.createElement("h2");
+      title.className = "file-title";
+      title.textContent = files.length === 1
+        ? String(files[0].name || "large.jsonl")
+        : `${files.length} files`;
+      section.appendChild(title);
+
+      const summary = document.createElement("p");
+      summary.className = "virtual-summary";
+      summary.textContent = options.source === "memory"
+        ? `Virtualized ${records.length} entries.`
+        : `Indexed ${records.length} entries without loading the full file into memory.`;
+      section.appendChild(summary);
+
+      const feed = document.createElement("div");
+      feed.className = "feed virtual-feed";
+      const contentTopSpacerEl = createVirtualSpacer("virtual-spacer virtual-content-spacer");
+      const contentItemsEl = document.createElement("div");
+      contentItemsEl.className = "virtual-items virtual-content-items";
+      const contentBottomSpacerEl = createVirtualSpacer("virtual-spacer virtual-content-spacer");
+      feed.appendChild(contentTopSpacerEl);
+      feed.appendChild(contentItemsEl);
+      feed.appendChild(contentBottomSpacerEl);
+      section.appendChild(feed);
+
+      navListEl.textContent = "";
+      navListEl.classList.add("virtual-nav-list");
+      const navTopSpacerEl = createVirtualSpacer("virtual-spacer virtual-nav-spacer");
+      const navItemsEl = document.createElement("div");
+      navItemsEl.className = "virtual-items virtual-nav-items";
+      const navBottomSpacerEl = createVirtualSpacer("virtual-spacer virtual-nav-spacer");
+      navListEl.appendChild(navTopSpacerEl);
+      navListEl.appendChild(navItemsEl);
+      navListEl.appendChild(navBottomSpacerEl);
+
+      outputEl.appendChild(section);
+
+      const session = {
+        files,
+        records,
+        source: options.source || "file",
+        contentTopSpacerEl,
+        contentItemsEl,
+        contentBottomSpacerEl,
+        navTopSpacerEl,
+        navItemsEl,
+        navBottomSpacerEl,
+        contentStart: -1,
+        contentEnd: -1,
+        navStart: -1,
+        navEnd: -1,
+        mountedCards: new Map(),
+        entryCache: new Map(),
+        cacheBytes: 0,
+        detailsOpenState: null
+      };
+
+      activeVirtualSession = session;
+      renderVirtualNavWindow(session);
+      return renderVirtualContentWindow(session).then(() => session);
+    }
+
     async function handleFiles(fileList) {
       const files = [...fileList].filter((file) => file && file.size >= 0);
       if (files.length === 0) {
         return;
       }
 
+      const loadToken = createLoadToken();
       closeNavFocusMode();
       clearNavTargetHighlight();
       clearContentHoverNavItem();
+      activeVirtualSession = null;
       outputEl.textContent = "";
       navListEl.textContent = "";
+      navListEl.classList.remove("virtual-nav-list");
       mainColumnEl.scrollTop = 0;
       navColumnEl.scrollTop = 0;
       syncUiState({ rendering: true });
       setStatus(`Rendering ${files.length} file(s)...`);
 
-      for (const file of files) {
-        const section = document.createElement("section");
-        section.className = "file-block";
-
-        const title = document.createElement("h2");
-        title.className = "file-title";
-        title.textContent = file.name;
-        section.appendChild(title);
-
-        try {
-          const text = await file.text();
-          const entries = parseJsonl(text);
-          renderEntries(entries, section);
-        } catch (error) {
-          const pre = document.createElement("pre");
-          pre.textContent = String(error && error.message ? error.message : error);
-          section.appendChild(pre);
+      try {
+        const shouldStream = files.some((file) => Number(file.size || 0) > largeFileByteThreshold);
+        if (shouldStream) {
+          setStatus(`Indexing ${files.length} large file(s)...`);
+          const records = await buildLargeFileIndex(files, loadToken);
+          throwIfCancelled(loadToken);
+          outputEl.textContent = "";
+          navListEl.textContent = "";
+          await createVirtualSession(files, records, { source: "file" });
+          throwIfCancelled(loadToken);
+          syncUiState();
+          setStatus(`Done. Indexed ${records.length} entries from ${files.length} file(s).`, "ok");
+          return;
         }
 
-        outputEl.appendChild(section);
-      }
+        const parsedFiles = [];
+        let totalEntries = 0;
+        for (const file of files) {
+          throwIfCancelled(loadToken);
+          const fileResult = {
+            file,
+            name: String(file.name || "session.jsonl"),
+            entries: [],
+            error: null
+          };
 
-      syncUiState();
-      setStatus(`Done. Rendered ${files.length} file(s).`, "ok");
+          try {
+            const text = await file.text();
+            throwIfCancelled(loadToken);
+            fileResult.entries = parseJsonl(text);
+            totalEntries += fileResult.entries.length;
+          } catch (error) {
+            fileResult.error = error;
+          }
+
+          parsedFiles.push(fileResult);
+        }
+
+        const canVirtualizeParsedFiles = parsedFiles.every((fileResult) => !fileResult.error)
+          && totalEntries > largeEntryThreshold;
+        if (canVirtualizeParsedFiles) {
+          const records = createMemoryEntryRecords(parsedFiles);
+          await createVirtualSession(files, records, { source: "memory" });
+          throwIfCancelled(loadToken);
+          syncUiState();
+          setStatus(`Done. Virtualized ${records.length} entries from ${files.length} file(s).`, "ok");
+          return;
+        }
+
+        for (const fileResult of parsedFiles) {
+          const section = document.createElement("section");
+          section.className = "file-block";
+
+          const title = document.createElement("h2");
+          title.className = "file-title";
+          title.textContent = fileResult.name;
+          section.appendChild(title);
+
+          if (fileResult.error) {
+            const pre = document.createElement("pre");
+            pre.textContent = String(fileResult.error && fileResult.error.message ? fileResult.error.message : fileResult.error);
+            section.appendChild(pre);
+          } else {
+            renderEntries(fileResult.entries, section);
+          }
+
+          outputEl.appendChild(section);
+        }
+
+        throwIfCancelled(loadToken);
+        syncUiState();
+        setStatus(`Done. Rendered ${files.length} file(s).`, "ok");
+      } catch (error) {
+        if (isCancelledError(error)) {
+          return;
+        }
+
+        outputEl.textContent = "";
+        navListEl.textContent = "";
+        navListEl.classList.remove("virtual-nav-list");
+        activeVirtualSession = null;
+
+        const section = document.createElement("section");
+        section.className = "file-block";
+        const title = document.createElement("h2");
+        title.className = "file-title";
+        title.textContent = "Error";
+        section.appendChild(title);
+        const pre = document.createElement("pre");
+        pre.textContent = String(error && error.message ? error.message : error);
+        section.appendChild(pre);
+        outputEl.appendChild(section);
+
+        syncUiState();
+        setStatus("Could not render file.", "error");
+      } finally {
+        if (activeLoadToken === loadToken) {
+          activeLoadToken = null;
+        }
+      }
     }
 
     function clearOutput() {
+      cancelActiveLoad();
       closeNavFocusMode();
       clearNavTargetHighlight();
       clearContentHoverNavItem();
+      activeVirtualSession = null;
       outputEl.textContent = "";
       navListEl.textContent = "";
+      navListEl.classList.remove("virtual-nav-list");
       syncVisibleNavItemBorders();
       setStatus("");
       fileInput.value = "";
@@ -1593,6 +2599,8 @@ export function createJsonlViewerApp(deps = {}) {
 
     function onWindowResize() {
       syncClearButtonPosition();
+      renderVirtualContentWindow(activeVirtualSession);
+      renderVirtualNavWindow(activeVirtualSession);
       syncVisibleNavItemBorders();
       setNavFocusActive(isNavFocusActive);
     }

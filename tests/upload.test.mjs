@@ -174,7 +174,7 @@ function readAppModule() {
   return fs.readFileSync(path.join(process.cwd(), 'assets/js/app.mjs'), 'utf8');
 }
 
-function createHarness() {
+function createHarness(appDeps = {}) {
   const ids = new Map();
   const clipboardWrites = [];
   const localStorageValues = new Map();
@@ -276,7 +276,8 @@ function createHarness() {
       }
     },
     setTimeout,
-    clearTimeout
+    clearTimeout,
+    ...appDeps
   });
 
   assert.ok(appApi, 'app API should initialize for test harness');
@@ -297,6 +298,57 @@ function createFile(name, text) {
     size: text.length,
     async text() {
       return text;
+    }
+  };
+}
+
+function createStreamingFile(name, text, chunkSize = 17) {
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+  const bytes = encoder.encode(text);
+  const counters = {
+    streamCalls: 0,
+    textCalls: 0,
+    sliceTextCalls: 0
+  };
+
+  return {
+    name,
+    size: bytes.length,
+    counters,
+    stream() {
+      counters.streamCalls += 1;
+      let offset = 0;
+      return new ReadableStream({
+        pull(controller) {
+          if (offset >= bytes.length) {
+            controller.close();
+            return;
+          }
+
+          const end = Math.min(bytes.length, offset + chunkSize);
+          controller.enqueue(bytes.slice(offset, end));
+          offset = end;
+        }
+      });
+    },
+    slice(start, end) {
+      const safeStart = Math.max(0, Number(start || 0));
+      const safeEnd = Math.max(safeStart, Number(end || 0));
+      const sliceBytes = bytes.slice(safeStart, safeEnd);
+      return {
+        async text() {
+          counters.sliceTextCalls += 1;
+          return decoder.decode(sliceBytes);
+        },
+        async arrayBuffer() {
+          return sliceBytes.buffer.slice(sliceBytes.byteOffset, sliceBytes.byteOffset + sliceBytes.byteLength);
+        }
+      };
+    },
+    async text() {
+      counters.textCalls += 1;
+      throw new Error('text() should not be called for large streaming files');
     }
   };
 }
@@ -1412,4 +1464,128 @@ test('TodoWrite falls back to default tool panels when todos are empty or invali
     assert.equal(card.children[1].children[0].textContent, 'TodoWrite');
     assert.equal(card.children[2].children[0].textContent, 'result');
   }
+});
+
+test('large files are indexed from stream without calling text and keep rendered DOM bounded', async () => {
+  const api = createHarness({
+    largeFileByteThreshold: 1,
+    virtualEntryHeight: 100,
+    virtualNavRowHeight: 30,
+    virtualContentOverscanPx: 0,
+    virtualNavOverscanRows: 0
+  });
+  api.mainColumnEl.clientHeight = 250;
+  api.navColumnEl.clientHeight = 90;
+
+  const jsonlObjects = Array.from({ length: 60 }, (_, index) => ({
+    type: 'user',
+    timestamp: `2026-04-24T12:${String(index).padStart(2, '0')}:00Z`,
+    message: { content: [{ type: 'text', text: `line ${index}` }] }
+  }));
+  const file = createStreamingFile('large.jsonl', jsonlObjects.map((objectItem) => JSON.stringify(objectItem)).join('\n'), 19);
+
+  await api.handleFiles([file]);
+
+  const fileSection = api.outputEl.children[0];
+  const virtualSummary = fileSection.children[1];
+  const feed = fileSection.children[2];
+  const contentItems = feed.children[1];
+  const navItems = api.navListEl.children[1];
+
+  assert.equal(file.counters.streamCalls, 1);
+  assert.equal(file.counters.textCalls, 0);
+  assert.equal(api.navListEl.classList.contains('virtual-nav-list'), true);
+  assert.match(virtualSummary.textContent, /Indexed 60 entries/);
+  assert.equal(contentItems.children.length <= 3, true);
+  assert.equal(navItems.children.length <= 3, true);
+  assert.match(api.statusEl.textContent, /Done\. Indexed 60 entries/);
+});
+
+test('virtual navigation click mounts target tool entry and opens its request panel', async () => {
+  const api = createHarness({
+    largeFileByteThreshold: 1,
+    virtualEntryHeight: 100,
+    virtualNavRowHeight: 30,
+    virtualContentOverscanPx: 0,
+    virtualNavOverscanRows: 0
+  });
+  api.mainColumnEl.clientHeight = 250;
+  api.navColumnEl.clientHeight = 90;
+
+  const jsonlObjects = [
+    ...Array.from({ length: 15 }, (_, index) => ({
+      type: 'user',
+      timestamp: `2026-04-24T12:${String(index).padStart(2, '0')}:00Z`,
+      message: { content: [{ type: 'text', text: `line ${index}` }] }
+    })),
+    {
+      type: 'assistant',
+      timestamp: '2026-04-24T12:15:00Z',
+      message: {
+        content: [{ type: 'tool_use', id: 'tool-virtual', name: 'Bash', input: { command: 'echo virtual' } }]
+      }
+    },
+    {
+      type: 'user',
+      timestamp: '2026-04-24T12:15:01Z',
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: 'tool-virtual', content: 'virtual output' }]
+      }
+    }
+  ];
+  const file = createStreamingFile('large-tools.jsonl', jsonlObjects.map((objectItem) => JSON.stringify(objectItem)).join('\n'), 23);
+
+  await api.handleFiles([file]);
+
+  api.navColumnEl.scrollTop = 15 * 30;
+  for (const handler of api.navColumnEl.eventListeners.scroll || []) {
+    handler({
+      target: api.navColumnEl,
+      currentTarget: api.navColumnEl,
+      preventDefault() {},
+      stopPropagation() {}
+    });
+  }
+
+  const navItems = api.navListEl.children[1].children;
+  const toolNavItem = navItems.find((item) => item.dataset.entryIndex === '15');
+  assert.ok(toolNavItem, 'target tool nav item should be mounted');
+
+  toolNavItem.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const fileSection = api.outputEl.children[0];
+  const feed = fileSection.children[2];
+  const contentItems = feed.children[1];
+  const toolCard = contentItems.children.find((card) => card.dataset.entryIndex === '15');
+
+  assert.ok(toolCard, 'target tool card should be mounted');
+  assert.equal(toolCard.classList.contains('tool'), true);
+  assert.equal(toolCard.classList.contains('nav-target-highlight'), true);
+  assert.equal(toolCard.children[1].tagName, 'DETAILS');
+  assert.equal(toolCard.children[1].open, true);
+  assert.equal(toolCard.children[1].children[0].textContent, 'Bash');
+});
+
+test('streaming JSONL parser reports invalid JSON line numbers across chunk boundaries', async () => {
+  const api = createHarness({
+    largeFileByteThreshold: 1,
+    streamChunkSize: 5
+  });
+  const validLine = JSON.stringify({
+    type: 'user',
+    timestamp: '2026-04-24T12:00:00Z',
+    message: { content: [{ type: 'text', text: 'ok' }] }
+  });
+  const file = createStreamingFile('broken.jsonl', `${validLine}\r\n\r\n{"type":`, 5);
+
+  await api.handleFiles([file]);
+
+  const errorSection = api.outputEl.children[0];
+  const pre = errorSection.children[1];
+
+  assert.equal(file.counters.textCalls, 0);
+  assert.equal(errorSection.children[0].textContent, 'Error');
+  assert.match(pre.textContent, /broken\.jsonl on line 3/);
+  assert.equal(api.statusEl.textContent, 'Could not render file.');
 });

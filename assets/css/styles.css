@@ -707,6 +707,38 @@
       gap: 0.55rem;
     }
 
+    .virtual-summary {
+      margin: -0.25rem 0 0.65rem;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .virtual-spacer {
+      flex: 0 0 auto;
+      pointer-events: none;
+    }
+
+    .virtual-items {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .virtual-content-items {
+      gap: 0.55rem;
+    }
+
+    .virtual-nav-list {
+      gap: 0;
+    }
+
+    .virtual-nav-items {
+      gap: 0.24rem;
+    }
+
+    .virtual-entry-loading pre {
+      color: var(--muted);
+    }
+
     .e {
       background: var(--surface-strong);
       border-radius: 10px;
