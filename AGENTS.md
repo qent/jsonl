@@ -1,39 +1,54 @@
-# Repository Guidelines
+# AGENTS.md
 
-## Project Structure & Module Organization
-This repository is intentionally small and flat:
-- `upload.html` contains the full app (HTML markup, CSS styles, and client-side JavaScript).
-- `tests/upload.test.mjs` contains automated tests for rendering/state behavior.
+## Purpose
+Guidelines for Codex/OpenAI agents working in this repository. Keep edits small, verifiable, and aligned with the current project layout.
 
-When changing app logic, keep related functions grouped (parsing, rendering, UI state). If you add or rename DOM IDs/classes used in script logic, update tests in the same change.
+## Current Project Structure
+- `index.html`: page shell, SEO/meta, and script/style entrypoints.
+- `assets/js/app.mjs`: core viewer logic (parsing, rendering, state, interactions).
+- `assets/css/styles.css`: full UI styling and theme variables.
+- `tests/upload.test.mjs`: automated behavior tests with a DOM-like harness.
+- `README.md`: product description and external context.
 
-## Build, Test, and Development Commands
-- `node --test tests/upload.test.mjs` runs the automated test suite.
-- `python3 -m http.server 8000` serves the project locally for browser testing.
-- Open `http://localhost:8000/upload.html` to validate drag-and-drop rendering manually.
+If you rename IDs/classes used by JavaScript, update tests in the same change.
 
-There is no bundler/build step; this project runs directly in the browser.
+## Commands
+- Run tests: `node --test tests/upload.test.mjs`
+- Local preview: `python3 -m http.server 8000`
+- Open app: `http://localhost:8000/index.html`
 
-## Coding Style & Naming Conventions
-- Use 2-space indentation across HTML, CSS, and JavaScript.
-- JavaScript naming: `camelCase` for variables/functions (`formatTimestamp`, `renderEntries`).
-- CSS naming: short `kebab-case` utility/component classes (`.dropzone-title`, `.file-block`).
-- Prefer small, focused functions and early returns over deeply nested blocks.
-- Keep `upload.html` readable: avoid large duplicated blocks and keep helper functions near related usage.
+No build step or bundler is used; this is a static browser app.
 
-## Testing Guidelines
-- Tests use Node’s built-in `node:test` with `assert/strict`.
-- Name tests as behavior statements, e.g. `"clear button appears after rendering and hides again after clear"`.
-- Add tests for any change to parsing, entry classification, or UI state transitions.
-- Run `node --test tests/upload.test.mjs` before every commit.
+## Codex Workflow (Required)
+1. Read relevant files first (`index.html`, `assets/js/app.mjs`, `assets/css/styles.css`, tests).
+2. Make focused edits only for the requested task.
+3. Add or update tests when behavior changes.
+4. Run `node --test tests/upload.test.mjs` before finishing.
+5. In final summary, report:
+   - changed files;
+   - what behavior changed;
+   - test command and result.
 
-## Commit & Pull Request Guidelines
-Current history uses very short lowercase commits (`init`, `good`). For new changes, prefer clear imperative subjects:
-- `fix result and tool highlight colors`
-- `add test for empty JSONL lines`
+## Coding Conventions
+- Indentation: 2 spaces (HTML/CSS/JS).
+- JavaScript: `camelCase` for functions/variables.
+- CSS classes: concise `kebab-case`.
+- Prefer small helper functions and early returns.
+- Avoid large duplicated blocks; keep logic grouped by concern (parse, normalize, render, UI state).
 
-PRs should include:
-- What changed and why.
-- Exact verification steps and command output.
-- Screenshot/GIF for visual UI updates.
-- Linked issue/task (if available).
+## Testing Expectations
+- Framework: built-in `node:test` + `assert/strict`.
+- Test names should describe user-visible behavior.
+- Add tests for:
+  - JSONL parsing and classification changes;
+  - rendering or visibility state changes;
+  - interactions (clear, navigation, copy, theme, etc.) affected by the edit.
+
+## Commit & PR Guidance
+- Use clear imperative commit subjects, e.g.:
+  - `fix nav focus state reset after clear`
+  - `add test for malformed jsonl line handling`
+- PR description should include:
+  - what changed and why;
+  - exact verification steps with command output;
+  - screenshot/GIF for UI changes.
