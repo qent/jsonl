@@ -302,6 +302,13 @@ export function createRenderer(options) {
         copyLabel: "Copy request"
       }
     );
+
+    card.appendChild(requestPanel);
+
+    if (entry.result_missing) {
+      return;
+    }
+
     const resultPanel = createPanel(
       entry.result_summary_label || "",
       entry.result_json || "",
@@ -313,7 +320,6 @@ export function createRenderer(options) {
       }
     );
 
-    card.appendChild(requestPanel);
     card.appendChild(resultPanel);
   }
 

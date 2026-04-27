@@ -1,0 +1,419 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jsonl.qent.io/schemas/claude-code-jsonl-line.v1.schema.json",
+  "title": "Claude Code JSONL history line v1",
+  "description": "Extensible schema for one raw Claude Code JSONL history line.",
+  "type": "object",
+  "required": ["type"],
+  "additionalProperties": true,
+  "oneOf": [
+    { "$ref": "#/$defs/assistantEvent" },
+    { "$ref": "#/$defs/userEvent" },
+    { "$ref": "#/$defs/systemEvent" },
+    { "$ref": "#/$defs/progressEvent" },
+    { "$ref": "#/$defs/attachmentEvent" },
+    { "$ref": "#/$defs/queueOperationEvent" },
+    { "$ref": "#/$defs/fileHistorySnapshotEvent" },
+    { "$ref": "#/$defs/permissionModeEvent" },
+    { "$ref": "#/$defs/lastPromptEvent" },
+    { "$ref": "#/$defs/agentNameEvent" },
+    { "$ref": "#/$defs/customTitleEvent" },
+    { "$ref": "#/$defs/unknownEvent" }
+  ],
+  "$defs": {
+    "knownEventType": {
+      "enum": [
+        "assistant",
+        "user",
+        "system",
+        "progress",
+        "attachment",
+        "queue-operation",
+        "file-history-snapshot",
+        "permission-mode",
+        "last-prompt",
+        "agent-name",
+        "custom-title"
+      ]
+    },
+    "commonMetadata": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "sessionId": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "uuid": { "type": "string" },
+        "parentUuid": { "type": ["string", "null"] },
+        "cwd": { "type": "string" },
+        "gitBranch": { "type": "string" },
+        "version": { "type": "string" },
+        "isSidechain": { "type": "boolean" },
+        "userType": { "type": "string" },
+        "agentId": { "type": "string" },
+        "slug": { "type": "string" }
+      }
+    },
+    "messageEnvelope": {
+      "type": "object",
+      "required": ["role", "content"],
+      "additionalProperties": true,
+      "properties": {
+        "role": { "enum": ["assistant", "user", "system"] },
+        "content": { "$ref": "#/$defs/messageContent" },
+        "id": { "type": "string" },
+        "model": { "type": "string" },
+        "usage": { "type": "object", "additionalProperties": true },
+        "stop_reason": { "type": ["string", "null"] },
+        "stop_sequence": { "type": ["string", "null"] },
+        "stop_details": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "messageContent": {
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "array",
+          "items": { "$ref": "#/$defs/contentBlock" }
+        }
+      ]
+    },
+    "contentBlock": {
+      "oneOf": [
+        { "$ref": "#/$defs/textContentBlock" },
+        { "$ref": "#/$defs/thinkingContentBlock" },
+        { "$ref": "#/$defs/toolUseContentBlock" },
+        { "$ref": "#/$defs/toolResultContentBlock" },
+        { "$ref": "#/$defs/unknownContentBlock" }
+      ]
+    },
+    "textContentBlock": {
+      "type": "object",
+      "required": ["type", "text"],
+      "additionalProperties": true,
+      "properties": {
+        "type": { "const": "text" },
+        "text": { "type": "string" }
+      }
+    },
+    "thinkingContentBlock": {
+      "type": "object",
+      "required": ["type", "thinking"],
+      "additionalProperties": true,
+      "properties": {
+        "type": { "const": "thinking" },
+        "thinking": { "type": "string" },
+        "signature": { "type": "string" }
+      }
+    },
+    "toolUseContentBlock": {
+      "type": "object",
+      "required": ["type", "id", "name", "input"],
+      "additionalProperties": true,
+      "properties": {
+        "type": { "const": "tool_use" },
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "input": { "type": "object", "additionalProperties": true },
+        "caller": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "toolResultContentBlock": {
+      "type": "object",
+      "required": ["type", "tool_use_id", "content"],
+      "additionalProperties": true,
+      "properties": {
+        "type": { "const": "tool_result" },
+        "tool_use_id": { "type": "string" },
+        "content": {
+          "oneOf": [
+            { "type": "string" },
+            {
+              "type": "array",
+              "items": { "$ref": "#/$defs/contentBlock" }
+            },
+            { "type": "object", "additionalProperties": true },
+            { "type": "null" }
+          ]
+        },
+        "is_error": { "type": "boolean" },
+        "duration_ms": { "type": "number" }
+      }
+    },
+    "unknownContentBlock": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "type": "string",
+          "not": {
+            "enum": ["text", "thinking", "tool_use", "tool_result"]
+          }
+        }
+      }
+    },
+    "progressData": {
+      "oneOf": [
+        { "$ref": "#/$defs/bashProgressData" },
+        { "$ref": "#/$defs/hookProgressData" },
+        { "$ref": "#/$defs/agentProgressData" },
+        { "$ref": "#/$defs/mcpProgressData" },
+        { "$ref": "#/$defs/queryUpdateData" },
+        { "$ref": "#/$defs/searchResultsReceivedData" },
+        { "$ref": "#/$defs/unknownProgressData" }
+      ]
+    },
+    "bashProgressData": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": true,
+      "properties": {
+        "type": { "const": "bash_progress" },
+        "output": { "type": "string" },
+        "fullOutput": { "type": "string" },
+        "elapsedTimeSeconds": { "type": "number" },
+        "totalLines": { "type": "number" },
+        "totalBytes": { "type": "number" }
+      }
+    },
+    "hookProgressData": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": true,
+      "properties": {
+        "type": { "const": "hook_progress" },
+        "hookEvent": { "type": "string" },
+        "hookName": { "type": "string" },
+        "command": { "type": "string" }
+      }
+    },
+    "agentProgressData": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": true,
+      "properties": {
+        "type": { "const": "agent_progress" },
+        "message": { "type": "object", "additionalProperties": true },
+        "prompt": { "type": "string" },
+        "agentId": { "type": "string" }
+      }
+    },
+    "mcpProgressData": {
+      "type": "object",
+      "required": ["type", "status"],
+      "additionalProperties": true,
+      "properties": {
+        "type": { "const": "mcp_progress" },
+        "status": { "type": "string" },
+        "serverName": { "type": "string" },
+        "toolName": { "type": "string" },
+        "elapsedTimeMs": { "type": "number" }
+      }
+    },
+    "queryUpdateData": {
+      "type": "object",
+      "required": ["type", "query"],
+      "additionalProperties": true,
+      "properties": {
+        "type": { "const": "query_update" },
+        "query": { "type": "string" }
+      }
+    },
+    "searchResultsReceivedData": {
+      "type": "object",
+      "required": ["type", "query", "resultCount"],
+      "additionalProperties": true,
+      "properties": {
+        "type": { "const": "search_results_received" },
+        "query": { "type": "string" },
+        "resultCount": { "type": "number" }
+      }
+    },
+    "unknownProgressData": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "type": "string",
+          "not": {
+            "enum": [
+              "bash_progress",
+              "hook_progress",
+              "agent_progress",
+              "mcp_progress",
+              "query_update",
+              "search_results_received"
+            ]
+          }
+        }
+      }
+    },
+    "attachmentPayload": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": true,
+      "properties": {
+        "type": { "type": "string" },
+        "content": {},
+        "filename": { "type": "string" },
+        "displayPath": { "type": "string" },
+        "prompt": { "type": "string" },
+        "snippet": { "type": "string" }
+      }
+    },
+    "assistantEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/commonMetadata" },
+        {
+          "type": "object",
+          "required": ["type", "message"],
+          "additionalProperties": true,
+          "properties": {
+            "type": { "const": "assistant" },
+            "message": { "$ref": "#/$defs/messageEnvelope" }
+          }
+        }
+      ]
+    },
+    "userEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/commonMetadata" },
+        {
+          "type": "object",
+          "required": ["type", "message"],
+          "additionalProperties": true,
+          "properties": {
+            "type": { "const": "user" },
+            "message": { "$ref": "#/$defs/messageEnvelope" },
+            "toolUseResult": {}
+          }
+        }
+      ]
+    },
+    "systemEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/commonMetadata" },
+        {
+          "type": "object",
+          "required": ["type", "subtype"],
+          "additionalProperties": true,
+          "properties": {
+            "type": { "const": "system" },
+            "subtype": { "type": "string" },
+            "content": { "type": "string" },
+            "level": { "type": "string" },
+            "durationMs": { "type": "number" },
+            "messageCount": { "type": "number" },
+            "error": {},
+            "cause": {}
+          }
+        }
+      ]
+    },
+    "progressEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/commonMetadata" },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "additionalProperties": true,
+          "properties": {
+            "type": { "const": "progress" },
+            "data": { "$ref": "#/$defs/progressData" },
+            "toolUseID": { "type": "string" },
+            "parentToolUseID": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "attachmentEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/commonMetadata" },
+        {
+          "type": "object",
+          "required": ["type", "attachment"],
+          "additionalProperties": true,
+          "properties": {
+            "type": { "const": "attachment" },
+            "attachment": { "$ref": "#/$defs/attachmentPayload" }
+          }
+        }
+      ]
+    },
+    "queueOperationEvent": {
+      "type": "object",
+      "required": ["type", "operation"],
+      "additionalProperties": true,
+      "properties": {
+        "type": { "const": "queue-operation" },
+        "operation": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "content": { "type": "string" }
+      }
+    },
+    "fileHistorySnapshotEvent": {
+      "type": "object",
+      "required": ["type", "messageId", "snapshot"],
+      "additionalProperties": true,
+      "properties": {
+        "type": { "const": "file-history-snapshot" },
+        "messageId": { "type": "string" },
+        "snapshot": { "type": "object", "additionalProperties": true },
+        "isSnapshotUpdate": { "type": "boolean" }
+      }
+    },
+    "permissionModeEvent": {
+      "type": "object",
+      "required": ["type", "permissionMode", "sessionId"],
+      "additionalProperties": true,
+      "properties": {
+        "type": { "const": "permission-mode" },
+        "permissionMode": { "type": "string" },
+        "sessionId": { "type": "string" }
+      }
+    },
+    "lastPromptEvent": {
+      "type": "object",
+      "required": ["type", "lastPrompt", "sessionId"],
+      "additionalProperties": true,
+      "properties": {
+        "type": { "const": "last-prompt" },
+        "lastPrompt": { "type": "string" },
+        "sessionId": { "type": "string" }
+      }
+    },
+    "agentNameEvent": {
+      "type": "object",
+      "required": ["type", "agentName", "sessionId"],
+      "additionalProperties": true,
+      "properties": {
+        "type": { "const": "agent-name" },
+        "agentName": { "type": "string" },
+        "sessionId": { "type": "string" }
+      }
+    },
+    "customTitleEvent": {
+      "type": "object",
+      "required": ["type", "customTitle", "sessionId"],
+      "additionalProperties": true,
+      "properties": {
+        "type": { "const": "custom-title" },
+        "customTitle": { "type": "string" },
+        "sessionId": { "type": "string" }
+      }
+    },
+    "unknownEvent": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "type": "string",
+          "not": { "$ref": "#/$defs/knownEventType" }
+        }
+      }
+    }
+  }
+}

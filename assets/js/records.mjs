@@ -3,6 +3,7 @@ import {
   buildEntries,
   collectToolUses,
   collectToolUsesFromObject,
+  createToolRequestEntry,
   entryHasDetails,
   getTypeLabel,
   truncateNavLabel
@@ -149,6 +150,35 @@ export function createMemoryEntryRecords(fileEntriesList, options = {}) {
   return records;
 }
 
+export function appendPendingToolUseRecords(records, fileIndex, fileName, toolUses, options = {}) {
+  const { config, createAnchorId } = resolveRecordOptions(options);
+
+  for (const [toolUseId, toolUse] of Object.entries(toolUses || {})) {
+    const entry = createToolRequestEntry(toolUseId, toolUse, {
+      config,
+      createAnchorId
+    });
+    const entryIndex = records.length;
+    const lineRef = toolUse && toolUse.line_ref ? toolUse.line_ref : null;
+    const summary = createEntrySummary(entry, fileIndex, fileName, entryIndex, lineRef, {
+      config,
+      createAnchorId
+    });
+    records.push({
+      source: "memory",
+      fileIndex,
+      fileName,
+      entryIndex,
+      lineRef,
+      toolUseId,
+      entry,
+      summary,
+      estimatedBytes: Math.max(512, JSON.stringify(entry).length)
+    });
+    delete toolUses[toolUseId];
+  }
+}
+
 export async function buildLargeFileIndex(files, options = {}) {
   const {
     config,
@@ -201,6 +231,11 @@ export async function buildLargeFileIndex(files, options = {}) {
         await sleep(0, setTimeoutFn);
       }
     }
+
+    appendPendingToolUseRecords(records, fileIndex, fileName, toolUses, {
+      config,
+      createAnchorId
+    });
 
     setStatus(`Indexed ${fileName}: ${records.length} entries...`);
     await sleep(0, setTimeoutFn);

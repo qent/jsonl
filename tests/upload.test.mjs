@@ -177,6 +177,15 @@ function readStylesCss() {
   return fs.readFileSync(path.join(process.cwd(), 'assets/css/styles.css'), 'utf8');
 }
 
+function readClaudeCodeJsonlLineSchema() {
+  return JSON.parse(
+    fs.readFileSync(
+      path.join(process.cwd(), 'schemas/claude-code-jsonl-line.v1.schema.json'),
+      'utf8'
+    )
+  );
+}
+
 function readAppModule() {
   return fs.readFileSync(path.join(process.cwd(), 'assets/js/app.mjs'), 'utf8');
 }
@@ -368,6 +377,29 @@ function findChildByClass(element, className) {
   return (element.children || []).find((child) => child.classList && child.classList.contains(className));
 }
 
+function collectChildrenByClass(element, className, results = []) {
+  if (!element || !element.children) {
+    return results;
+  }
+
+  for (const child of element.children) {
+    if (child.classList && child.classList.contains(className)) {
+      results.push(child);
+    }
+    collectChildrenByClass(child, className, results);
+  }
+
+  return results;
+}
+
+function getRenderedNavItems(api) {
+  return collectChildrenByClass(api.navListEl, 'nav-item');
+}
+
+function getRenderedCards(api) {
+  return collectChildrenByClass(api.outputEl, 'e');
+}
+
 test('pure JSONL parser reports malformed non-empty line numbers', () => {
   assert.throws(
     () => parseJsonLines('{"ok":true}\n\n{"broken":'),
@@ -436,6 +468,65 @@ test('pure virtual range helper applies viewport and overscan bounds', () => {
   assert.deepEqual(calculateVirtualRange(100, 30, 300, 90, 30), { start: 9, end: 14 });
   assert.deepEqual(calculateVirtualRange(0, 30, 300, 90, 30), { start: 0, end: 0 });
   assert.deepEqual(calculateVirtualRange(3, 0, 0, 0, 0), { start: 0, end: 1 });
+});
+
+test('Claude Code JSONL line schema defines versioned raw event and content block contracts', () => {
+  const schema = readClaudeCodeJsonlLineSchema();
+  const schemaText = JSON.stringify(schema);
+  const topLevelEventDefs = [
+    'assistantEvent',
+    'userEvent',
+    'systemEvent',
+    'progressEvent',
+    'attachmentEvent',
+    'queueOperationEvent',
+    'fileHistorySnapshotEvent',
+    'permissionModeEvent',
+    'lastPromptEvent',
+    'agentNameEvent',
+    'customTitleEvent',
+    'unknownEvent'
+  ];
+  const contentBlockDefs = [
+    'textContentBlock',
+    'thinkingContentBlock',
+    'toolUseContentBlock',
+    'toolResultContentBlock',
+    'unknownContentBlock'
+  ];
+
+  assert.equal(schema.$schema, 'https://json-schema.org/draft/2020-12/schema');
+  assert.equal(schema.$id, 'https://jsonl.qent.io/schemas/claude-code-jsonl-line.v1.schema.json');
+  assert.deepEqual(schema.required, ['type']);
+  assert.equal(schema.additionalProperties, true);
+
+  for (const defName of topLevelEventDefs) {
+    assert.ok(schema.$defs[defName], `${defName} should be represented`);
+  }
+
+  for (const defName of contentBlockDefs) {
+    assert.ok(schema.$defs[defName], `${defName} should be represented`);
+  }
+
+  for (const eventType of [
+    'assistant',
+    'user',
+    'system',
+    'progress',
+    'attachment',
+    'queue-operation',
+    'file-history-snapshot',
+    'permission-mode',
+    'last-prompt',
+    'agent-name',
+    'custom-title'
+  ]) {
+    assert.match(schemaText, new RegExp(`"${eventType}"`));
+  }
+
+  for (const blockType of ['text', 'thinking', 'tool_use', 'tool_result']) {
+    assert.match(schemaText, new RegExp(`"${blockType}"`));
+  }
 });
 
 test('clear button stays hidden until something is rendered', () => {
@@ -847,6 +938,199 @@ test('navigation focus pip swaps directional triangles when focus mode toggles',
   api.navFocusBackdropEl.click();
 
   assert.equal(api.navFocusPipIconEl.textContent, '◂');
+});
+
+test('raw Claude Code message variants render string content, thinking, array tool results, and unknown blocks', async () => {
+  const api = createHarness();
+  const jsonlObjects = [
+    {
+      type: 'user',
+      timestamp: '2026-04-24T12:30:00Z',
+      message: {
+        role: 'user',
+        content: 'plain prompt from Claude Code'
+      }
+    },
+    {
+      type: 'assistant',
+      timestamp: '2026-04-24T12:30:01Z',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'let me reason', signature: 'sig' },
+          { type: 'text', text: 'agent answer' },
+          { type: 'redacted', reason: 'future block' },
+          { type: 'tool_use', id: 'tool-array-result', name: 'Bash', input: { command: 'echo hi' } }
+        ]
+      }
+    },
+    {
+      type: 'user',
+      timestamp: '2026-04-24T12:30:02Z',
+      message: {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'tool-array-result',
+            content: [{ type: 'text', text: 'array result text' }]
+          }
+        ]
+      }
+    }
+  ];
+  const jsonl = jsonlObjects.map((objectItem) => JSON.stringify(objectItem)).join('\n');
+
+  await api.handleFiles([createFile('sample.jsonl', jsonl)]);
+
+  const navLabels = getRenderedNavItems(api).map((item) => item.children[2].textContent);
+  assert.deepEqual(navLabels, [
+    'plain prompt from Claude Code',
+    'thinking: let me reason',
+    'agent answer',
+    'agent: redacted',
+    'echo hi'
+  ]);
+
+  const feed = api.outputEl.children[0].children[1];
+  const cards = feed.children;
+  assert.equal(cards.length, 5);
+  assert.equal(cards[0].classList.contains('user'), true);
+  assert.equal(cards[1].classList.contains('system'), true);
+  assert.equal(cards[2].classList.contains('agent'), true);
+  assert.equal(cards[3].children[1].tagName, 'DETAILS');
+  assert.equal(cards[4].classList.contains('tool'), true);
+  assert.equal(cards[4].children[2].children[1].textContent, 'array result text');
+});
+
+test('top-level Claude Code service events render visible cards without losing raw payloads', async () => {
+  const api = createHarness();
+  const jsonlObjects = [
+    {
+      type: 'system',
+      subtype: 'api_error',
+      level: 'error',
+      timestamp: '2026-04-24T12:31:00Z',
+      error: { message: 'connection failed' }
+    },
+    {
+      type: 'progress',
+      timestamp: '2026-04-24T12:31:01Z',
+      data: {
+        type: 'bash_progress',
+        output: 'line one',
+        fullOutput: 'line one\nline two',
+        elapsedTimeSeconds: 1,
+        totalLines: 2
+      }
+    },
+    {
+      type: 'attachment',
+      timestamp: '2026-04-24T12:31:02Z',
+      attachment: {
+        type: 'file',
+        filename: '/tmp/index.html',
+        displayPath: 'index.html',
+        content: { type: 'text', text: '<main></main>' }
+      }
+    },
+    {
+      type: 'queue-operation',
+      operation: 'enqueue',
+      timestamp: '2026-04-24T12:31:03Z',
+      content: 'queued command body'
+    },
+    {
+      type: 'file-history-snapshot',
+      messageId: 'message-1',
+      snapshot: { trackedFileBackups: {} },
+      isSnapshotUpdate: false
+    },
+    {
+      type: 'permission-mode',
+      permissionMode: 'default',
+      sessionId: 'session-1'
+    },
+    {
+      type: 'last-prompt',
+      lastPrompt: 'continue the implementation',
+      sessionId: 'session-1'
+    },
+    {
+      type: 'agent-name',
+      agentName: 'worker-one',
+      sessionId: 'session-1'
+    },
+    {
+      type: 'custom-title',
+      customTitle: 'Claude JSONL support',
+      sessionId: 'session-1'
+    },
+    {
+      type: 'future-event',
+      payload: { ok: true }
+    }
+  ];
+  const jsonl = jsonlObjects.map((objectItem) => JSON.stringify(objectItem)).join('\n');
+
+  await api.handleFiles([createFile('sample.jsonl', jsonl)]);
+
+  const navItems = getRenderedNavItems(api);
+  const navLabels = navItems.map((item) => item.children[2].textContent);
+  assert.deepEqual(navLabels, [
+    'api_error',
+    'bash_progress: line one',
+    'file: index.html',
+    'queue enqueue: queued command body',
+    'file history snapshot',
+    'permission: default',
+    'continue the implementation',
+    'agent: worker-one',
+    'title: Claude JSONL support',
+    'future-event'
+  ]);
+  assert.equal(navItems[0].classList.contains('error'), true);
+
+  const cards = api.outputEl.children[0].children[1].children;
+  assert.equal(cards.length, 10);
+  assert.equal(cards[0].classList.contains('error'), true);
+  assert.equal(cards[0].children[1].tagName, 'DETAILS');
+  assert.equal(cards[1].children[1].children[1].textContent.includes('"bash_progress"'), true);
+  assert.equal(cards[2].children[1].children[1].textContent.includes('"displayPath": "index.html"'), true);
+  assert.equal(cards[9].children[1].children[1].textContent.includes('"future-event"'), true);
+});
+
+test('unmatched tool_use renders a request-only tool card after streaming index completes', async () => {
+  const api = createHarness({
+    largeFileByteThreshold: 1,
+    virtualEntryHeight: 100,
+    virtualEntryGap: 0,
+    virtualContentOverscanPx: 0,
+    virtualNavOverscanRows: 0
+  });
+  api.mainColumnEl.clientHeight = 250;
+  api.navColumnEl.clientHeight = 90;
+  const file = createStreamingFile('pending-tool.jsonl', JSON.stringify({
+    type: 'assistant',
+    timestamp: '2026-04-24T12:32:00Z',
+    message: {
+      role: 'assistant',
+      content: [{ type: 'tool_use', id: 'pending-tool', name: 'Bash', input: { command: 'echo pending' } }]
+    }
+  }), 17);
+
+  await api.handleFiles([file]);
+
+  const navItems = getRenderedNavItems(api);
+  assert.equal(file.counters.textCalls, 0);
+  assert.equal(navItems.length, 1);
+  assert.equal(navItems[0].children[2].textContent, 'echo pending');
+
+  const card = getRenderedCards(api)[0];
+  assert.equal(card.classList.contains('tool'), true);
+  assert.equal(card.children.length, 2);
+  assert.equal(card.children[1].tagName, 'DETAILS');
+  assert.equal(card.children[1].children[0].textContent, 'Bash');
 });
 
 test('navigation labels follow block rules and highlight clears on document click and scroll', async () => {
