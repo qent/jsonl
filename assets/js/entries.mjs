@@ -274,6 +274,10 @@ export function resolveToolRequestSummary(toolName, toolInput, config = DEFAULT_
     AskUserQuestion: () => ({
       label: "AskUserQuestion",
       preview: createAskUserQuestionPreview()
+    }),
+    Agent: () => ({
+      label: "Agent",
+      preview: toSingleLineText(input.description)
     })
   };
 
@@ -375,6 +379,10 @@ export function resolveToolNavLabel(toolName, toolInput, fallbackLabel) {
     Read: () => {
       const filePathValue = String(input.file_path || "").trim();
       return filePathValue ? `Read: ${filePathValue}` : String(toolName || safeFallback).trim();
+    },
+    Agent: () => {
+      const descriptionValue = toSingleLineText(input.description);
+      return descriptionValue ? `Agent: ${descriptionValue}` : String(toolName || safeFallback).trim();
     }
   };
 

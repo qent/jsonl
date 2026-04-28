@@ -429,15 +429,17 @@ test('pure tool helpers normalize todo items and navigation labels', () => {
   assert.equal(resolveToolNavLabel('WebSearch', { query: 'status page' }, 'tool'), 'WebSearch: status page');
   assert.equal(resolveToolNavLabel('WebFetch', { url: 'https://example.com/status' }, 'tool'), 'WebFetch: https://example.com/status');
   assert.equal(resolveToolNavLabel('Edit', { file_path: '/tmp/patch.diff' }, 'tool'), 'Edit: /tmp/patch.diff');
+  assert.equal(resolveToolNavLabel('Agent', { description: 'Find root cause in API logs' }, 'tool'), 'Agent: Find root cause in API logs');
   assert.equal(resolveToolNavLabel('Skill', { skill: 'Plan markdown' }, 'tool'), '/Plan markdown');
 });
 
-test('pure tool request summaries preview Edit paths and AskUserQuestion choices', () => {
+test('pure tool request summaries preview Edit paths, Agent descriptions, and AskUserQuestion choices', () => {
   const editSummary = resolveToolRequestSummary('Edit', { file_path: '/tmp/source/file.mjs' });
   const globSummary = resolveToolRequestSummary('Glob', { pattern: '**/*.mjs' });
   const webSearchSummary = resolveToolRequestSummary('WebSearch', { query: 'latest incidents' });
   const webFetchSummary = resolveToolRequestSummary('WebFetch', { url: 'https://example.com/incidents' });
   const writeSummary = resolveToolRequestSummary('Write', { file_path: '/tmp/out.jsonl' });
+  const agentSummary = resolveToolRequestSummary('Agent', { description: 'Summarize open incidents for Europe region' });
   const askSummary = resolveToolRequestSummary('AskUserQuestion', {
     questions: [
       {
@@ -469,6 +471,10 @@ test('pure tool request summaries preview Edit paths and AskUserQuestion choices
   assert.deepEqual(writeSummary, {
     label: 'Write',
     preview: '/tmp/out.jsonl'
+  });
+  assert.deepEqual(agentSummary, {
+    label: 'Agent',
+    preview: 'Summarize open incidents for Europe region'
   });
   assert.equal(askSummary.label, 'AskUserQuestion');
   assert.equal(
@@ -574,6 +580,45 @@ test('Edit shows file_path in right navigation label', async () => {
   assert.equal(navText.children[0].tagName, 'STRONG');
   assert.equal(navText.children[0].textContent, 'Edit:');
   assert.equal(navText.children[1].textContent, ` ${editPath}`);
+});
+
+test('Agent shows description in request preview and right navigation label', async () => {
+  const api = createHarness();
+  const agentDescription = 'Draft release notes from recent merged PRs';
+  const jsonlObjects = [
+    {
+      type: 'assistant',
+      timestamp: '2026-04-24T12:32:00Z',
+      message: {
+        content: [{ type: 'tool_use', id: 'tool-agent-1', name: 'Agent', input: { description: agentDescription } }]
+      }
+    },
+    {
+      type: 'user',
+      timestamp: '2026-04-24T12:32:01Z',
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: 'tool-agent-1', content: 'agent done' }]
+      }
+    }
+  ];
+  const jsonl = jsonlObjects.map((objectItem) => JSON.stringify(objectItem)).join('\n');
+
+  await api.handleFiles([createFile('sample.jsonl', jsonl)]);
+
+  const navText = api.navListEl.children[0].children[2];
+  assert.equal(navText.textContent, `Agent: ${agentDescription}`);
+  assert.equal(navText.children[0].tagName, 'STRONG');
+  assert.equal(navText.children[0].textContent, 'Agent:');
+  assert.equal(navText.children[1].textContent, ` ${agentDescription}`);
+
+  const cards = getRenderedCards(api);
+  assert.equal(cards.length, 1);
+  const requestSummary = cards[0].children[1].children[0];
+  const preview = findChildByClass(requestSummary, 'summary-preview');
+
+  assert.equal(requestSummary.textContent, 'Agent');
+  assert.ok(preview, 'Agent preview should be present');
+  assert.equal(preview.textContent, ` ${agentDescription}`);
 });
 
 test('pure record helpers preserve anchors and truncate large nav summaries', () => {
@@ -1048,21 +1093,39 @@ test('tool summary preview styles define theme-aware default and error colors', 
 test('navigation focus pip stays visually attached to the navigation column', () => {
   const stylesCss = readStylesCss();
   const html = readIndexHtml();
+  const rootBlockMatch = stylesCss.match(/:root\s*\{([\s\S]*?)\n\s*\}\n\n\s*\.app\[data-theme="dark"\]/);
+  const layoutGridBlockMatch = stylesCss.match(/\.layout-grid\s*\{([\s\S]*?)\n\s*\}/);
+  const hasNavLayoutGridBlockMatch = stylesCss.match(/\.app\.has-nav \.layout-grid\s*\{([\s\S]*?)\n\s*\}/);
+  const hasNavMainColumnBlockMatch = stylesCss.match(/\.app\.has-nav \.main-column\s*\{([\s\S]*?)\n\s*\}/);
   const appBlockMatch = stylesCss.match(/\.app\s*\{([\s\S]*?)\n\s*\}/);
   const pipBlockMatch = stylesCss.match(/\.nav-focus-pip\s*\{([\s\S]*?)\n\s*\}/);
   const pipActiveBlockMatch = stylesCss.match(/\.app\.nav-focus-active \.nav-focus-pip\s*\{([\s\S]*?)\n\s*\}/);
   const pipAfterBlockMatch = stylesCss.match(/\.nav-focus-pip::after\s*\{/);
 
+  assert.ok(rootBlockMatch, 'root block not found');
+  assert.ok(layoutGridBlockMatch, 'layout grid block not found');
+  assert.ok(hasNavLayoutGridBlockMatch, 'app has-nav layout-grid block not found');
+  assert.ok(hasNavMainColumnBlockMatch, 'app has-nav main-column block not found');
   assert.ok(appBlockMatch, 'app block not found');
   assert.ok(pipBlockMatch, 'nav focus pip block not found');
   assert.ok(pipActiveBlockMatch, 'active nav focus pip block not found');
   assert.equal(pipAfterBlockMatch, null, 'nav focus pip separator block should be removed');
 
+  const rootBlock = rootBlockMatch[1];
+  const layoutGridBlock = layoutGridBlockMatch[1];
+  const hasNavLayoutGridBlock = hasNavLayoutGridBlockMatch[1];
+  const hasNavMainColumnBlock = hasNavMainColumnBlockMatch[1];
   const appBlock = appBlockMatch[1];
   const pipBlock = pipBlockMatch[1];
   const pipActiveBlock = pipActiveBlockMatch[1];
 
+  assert.match(rootBlock, /--nav-width:\s*20vw;/);
+  assert.match(rootBlock, /--nav-focus-width:\s*70vw;/);
+  assert.match(layoutGridBlock, /justify-content:\s*center;/);
+  assert.match(hasNavLayoutGridBlock, /justify-content:\s*flex-end;/);
+  assert.match(hasNavMainColumnBlock, /margin-left:\s*0;/);
   assert.match(appBlock, /padding:\s*0 0 0 var\(--page-inline-gap\);/);
+  assert.match(stylesCss, /@media \(min-width:\s*1121px\)\s*\{[\s\S]*?\.app\.has-nav \.clear-btn\s*\{[\s\S]*?right:\s*calc\(var\(--nav-width\) \+ var\(--column-inline-gap\) \+ var\(--scrollbar-safe-gap\)\);/);
   assert.match(pipBlock, /right:\s*calc\(var\(--nav-width\) - 1px\);/);
   assert.match(pipBlock, /border-right:\s*0;/);
   assert.match(pipBlock, /background:\s*var\(--nav-bg\);/);

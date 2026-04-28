@@ -74,10 +74,9 @@
       --markdown-code-border: #d5deeb;
       --markdown-table-border: #cbd5e1;
       --markdown-table-row-alt: rgba(148, 163, 184, 0.08);
-      --nav-width: min(320px, 32vw);
+      --nav-width: 20vw;
       --nav-half-width: calc(var(--nav-width) / 2);
-      --nav-focus-multiplier: 3;
-      --nav-focus-width: min(calc(var(--nav-width) * var(--nav-focus-multiplier)), 92vw);
+      --nav-focus-width: 70vw;
       --nav-focus-transition: 240ms ease;
       --main-column-max-width: 1040px;
       --page-inline-gap: clamp(0.8rem, 2.4vw, 1.5rem);
@@ -198,6 +197,10 @@
       justify-content: center;
     }
 
+    .app.has-nav .layout-grid {
+      justify-content: flex-end;
+    }
+
     .main-column {
       position: relative;
       min-width: 0;
@@ -213,7 +216,7 @@
     }
 
     .app.has-nav .main-column {
-      margin-left: var(--nav-half-width);
+      margin-left: 0;
     }
 
     .app.nav-focus-active .main-column {
@@ -250,6 +253,16 @@
       letter-spacing: 0;
       display: grid;
       place-items: center;
+    }
+
+    @media (min-width: 1121px) {
+      .app.has-nav .clear-btn {
+        right: calc(var(--nav-width) + var(--column-inline-gap) + var(--scrollbar-safe-gap));
+      }
+
+      .app.nav-focus-active .clear-btn {
+        right: calc(var(--nav-focus-width) + var(--column-inline-gap) + var(--scrollbar-safe-gap));
+      }
     }
 
     .theme-btn {
