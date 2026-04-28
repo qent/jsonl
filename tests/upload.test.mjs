@@ -417,6 +417,22 @@ test('time formatters normalize missing seconds to HH:MM:SS', () => {
   assert.equal(formatNavTime('2026-04-24T12:34:56.123Z'), '12:34:56');
 });
 
+test('navigation renders HH:MM timestamps as HH:MM:SS', async () => {
+  const api = createHarness();
+  const jsonl = JSON.stringify({
+    type: 'assistant',
+    timestamp: '2026-04-24T13:08Z',
+    message: {
+      content: [{ type: 'text', text: 'hello' }]
+    }
+  });
+
+  await api.handleFiles([createFile('sample.jsonl', jsonl)]);
+
+  assert.equal(api.navListEl.childElementCount, 1);
+  assert.equal(api.navListEl.children[0].children[0].textContent, '13:08:00');
+});
+
 test('pure tool helpers normalize todo items and navigation labels', () => {
   assert.deepEqual(
     normalizeTodoItems('TodoWrite', {
@@ -1042,7 +1058,9 @@ test('navigation items define hidden 4px left border and show it only for in-vie
   assert.match(beforeBlock, /background:\s*var\(--c,\s*var\(--entry-default\)\);/);
   assert.match(beforeBlock, /opacity:\s*0;/);
   assert.match(inViewportBlock, /opacity:\s*1;/);
-  assert.match(navTimeBlock, /flex:\s*0 0 8ch;/);
+  assert.match(navTimeBlock, /flex:\s*0 0 9ch;/);
+  assert.match(navTimeBlock, /min-width:\s*9ch;/);
+  assert.match(navTimeBlock, /white-space:\s*nowrap;/);
   assert.match(navTimeBlock, /text-align:\s*left;/);
 });
 

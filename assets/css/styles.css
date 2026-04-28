@@ -675,7 +675,9 @@
     }
 
     .nav-time {
-      flex: 0 0 8ch;
+      flex: 0 0 9ch;
+      min-width: 9ch;
+      white-space: nowrap;
       text-align: left;
       font-variant-numeric: tabular-nums;
       color: var(--time-text);

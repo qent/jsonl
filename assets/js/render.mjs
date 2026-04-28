@@ -555,7 +555,10 @@ export function createRenderer(options) {
 
     const navTime = document.createElement("span");
     navTime.className = "nav-time";
-    navTime.textContent = formatNavTime(entry.time || "");
+    const normalizedNavTime = formatNavTime(entry.time || "");
+    navTime.textContent = /^\d{2}:\d{2}$/.test(normalizedNavTime)
+      ? `${normalizedNavTime}:00`
+      : normalizedNavTime;
 
     const dot = document.createElement("span");
     dot.className = "nav-dot";
