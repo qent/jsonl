@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createJsonlViewerApp } from '../assets/js/app.mjs';
 import {
+  formatNavTime,
+  formatTimestamp,
   normalizeTodoItems,
   parseJsonLines,
   resolveToolRequestSummary,
@@ -406,6 +408,13 @@ test('pure JSONL parser reports malformed non-empty line numbers', () => {
     () => parseJsonLines('{"ok":true}\n\n{"broken":'),
     /Invalid JSON on line 2:/
   );
+});
+
+test('time formatters normalize missing seconds to HH:MM:SS', () => {
+  assert.equal(formatTimestamp('2026-04-24T12:34:56Z'), '12:34:56');
+  assert.equal(formatTimestamp('2026-04-24T12:34Z'), '12:34:00');
+  assert.equal(formatNavTime('12:34'), '12:34:00');
+  assert.equal(formatNavTime('2026-04-24T12:34:56.123Z'), '12:34:56');
 });
 
 test('pure tool helpers normalize todo items and navigation labels', () => {
@@ -1019,17 +1028,22 @@ test('navigation items define hidden 4px left border and show it only for in-vie
   const stylesCss = readStylesCss();
   const beforeBlockMatch = stylesCss.match(/\.nav-item::before\s*\{([\s\S]*?)\n\s*\}/);
   const inViewportBlockMatch = stylesCss.match(/\.nav-item\.in-viewport::before\s*\{([\s\S]*?)\n\s*\}/);
+  const navTimeBlockMatch = stylesCss.match(/\.nav-time\s*\{([\s\S]*?)\n\s*\}/);
   assert.ok(beforeBlockMatch, 'nav item pseudo-element block not found');
   assert.ok(inViewportBlockMatch, 'nav item in-viewport pseudo-element block not found');
+  assert.ok(navTimeBlockMatch, 'nav-time block not found');
 
   const beforeBlock = beforeBlockMatch[1];
   const inViewportBlock = inViewportBlockMatch[1];
+  const navTimeBlock = navTimeBlockMatch[1];
 
   assert.match(beforeBlock, /left:\s*calc\(-0\.8rem \+ 2px\);/);
   assert.match(beforeBlock, /width:\s*4px;/);
   assert.match(beforeBlock, /background:\s*var\(--c,\s*var\(--entry-default\)\);/);
   assert.match(beforeBlock, /opacity:\s*0;/);
   assert.match(inViewportBlock, /opacity:\s*1;/);
+  assert.match(navTimeBlock, /flex:\s*0 0 8ch;/);
+  assert.match(navTimeBlock, /text-align:\s*left;/);
 });
 
 test('navigation label hover underline is thin and gray when content card is hovered', () => {
@@ -1129,6 +1143,7 @@ test('navigation focus pip stays visually attached to the navigation column', ()
   assert.match(hasNavMainColumnBlock, /margin-left:\s*0;/);
   assert.match(navFocusMainColumnBlock, /margin-right:\s*var\(--nav-width\);/);
   assert.match(appBlock, /padding:\s*0 0 0 var\(--page-inline-gap\);/);
+  assert.match(stylesCss, /@media \(min-width:\s*1121px\)\s*\{[\s\S]*?\.app\.has-nav \.main-column\s*\{[\s\S]*?padding-left:\s*max\(var\(--column-inline-gap\),\s*3\.9rem\);/);
   assert.match(stylesCss, /@media \(min-width:\s*1121px\)\s*\{[\s\S]*?\.app\.has-nav \.clear-btn\s*\{[\s\S]*?right:\s*calc\(var\(--nav-width\) \+ var\(--column-inline-gap\) \+ var\(--scrollbar-safe-gap\)\);/);
   assert.match(pipBlock, /right:\s*calc\(var\(--nav-width\) - 1px\);/);
   assert.match(pipBlock, /border-right:\s*0;/);

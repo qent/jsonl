@@ -47,9 +47,11 @@ export function formatTimestamp(rawTimestamp) {
     return "";
   }
 
-  const isoTimeMatch = rawTimestamp.match(/T(\d{2}:\d{2}:\d{2})/);
+  const isoTimeMatch = rawTimestamp.match(/T(\d{2}:\d{2})(?::(\d{2}))?/);
   if (isoTimeMatch) {
-    return isoTimeMatch[1];
+    const minutes = isoTimeMatch[1];
+    const seconds = isoTimeMatch[2] || "00";
+    return `${minutes}:${seconds}`;
   }
 
   return rawTimestamp;
@@ -132,9 +134,11 @@ export function formatNavTime(rawTime) {
     return "";
   }
 
-  const timeMatch = normalized.match(/(?:T|\b)(\d{2}:\d{2}(?::\d{2})?)/);
+  const timeMatch = normalized.match(/(?:T|\b)(\d{2}:\d{2})(?::(\d{2}))?/);
   if (timeMatch) {
-    return timeMatch[1];
+    const minutes = timeMatch[1];
+    const seconds = timeMatch[2] || "00";
+    return `${minutes}:${seconds}`;
   }
 
   return normalized;

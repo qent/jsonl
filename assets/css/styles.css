@@ -676,9 +676,15 @@
 
     .nav-time {
       flex: 0 0 8ch;
-      text-align: right;
+      text-align: left;
       font-variant-numeric: tabular-nums;
       color: var(--time-text);
+    }
+
+    @media (min-width: 1121px) {
+      .app.has-nav .main-column {
+        padding-left: max(var(--column-inline-gap), 3.9rem);
+      }
     }
 
     .nav-dot {
