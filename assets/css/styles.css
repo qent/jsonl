@@ -74,7 +74,7 @@
       --markdown-code-border: #d5deeb;
       --markdown-table-border: #cbd5e1;
       --markdown-table-row-alt: rgba(148, 163, 184, 0.08);
-      --nav-width: 20vw;
+      --nav-width: 24vw;
       --nav-half-width: calc(var(--nav-width) / 2);
       --nav-focus-width: 70vw;
       --nav-focus-transition: 240ms ease;
@@ -675,7 +675,7 @@
     }
 
     .nav-time {
-      flex: 0 0 5ch;
+      flex: 0 0 8ch;
       text-align: right;
       font-variant-numeric: tabular-nums;
       color: var(--time-text);

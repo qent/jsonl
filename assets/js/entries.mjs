@@ -132,7 +132,7 @@ export function formatNavTime(rawTime) {
     return "";
   }
 
-  const timeMatch = normalized.match(/(?:T|\b)(\d{2}:\d{2})(?::\d{2})?/);
+  const timeMatch = normalized.match(/(?:T|\b)(\d{2}:\d{2}(?::\d{2})?)/);
   if (timeMatch) {
     return timeMatch[1];
   }

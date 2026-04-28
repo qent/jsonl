@@ -1122,7 +1122,7 @@ test('navigation focus pip stays visually attached to the navigation column', ()
   const pipBlock = pipBlockMatch[1];
   const pipActiveBlock = pipActiveBlockMatch[1];
 
-  assert.match(rootBlock, /--nav-width:\s*20vw;/);
+  assert.match(rootBlock, /--nav-width:\s*24vw;/);
   assert.match(rootBlock, /--nav-focus-width:\s*70vw;/);
   assert.match(layoutGridBlock, /justify-content:\s*center;/);
   assert.match(hasNavLayoutGridBlock, /justify-content:\s*flex-end;/);
@@ -1504,7 +1504,18 @@ test('navigation labels follow block rules and highlight clears on document clic
 
   const navTimes = api.navListEl.children.map((item) => item.children[0].textContent);
   const navLabels = api.navListEl.children.map((item) => item.children[2].textContent);
-  assert.deepEqual(navTimes, Array(navLabels.length).fill('12:00'));
+  assert.deepEqual(navTimes, [
+    '12:00:00',
+    '12:00:01',
+    '12:00:02',
+    '12:00:03',
+    '12:00:05',
+    '12:00:07',
+    '12:00:09',
+    '12:00:11',
+    '12:00:13',
+    '12:00:15'
+  ]);
   assert.deepEqual(navLabels, [
     'policy_update',
     'hello world',
