@@ -814,11 +814,14 @@ function createNonContentEntry(objectItem, options) {
 }
 
 export function parseJsonLines(text) {
-  const jsonLines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  const jsonLines = String(text || "").split("\n");
   const parsedObjects = [];
 
   for (let index = 0; index < jsonLines.length; index += 1) {
-    const line = jsonLines[index];
+    const line = jsonLines[index].replace(/\r$/, "");
+    if (line.trim().length === 0) {
+      continue;
+    }
 
     try {
       parsedObjects.push(JSON.parse(line));

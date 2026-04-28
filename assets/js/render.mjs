@@ -4,24 +4,6 @@ import {
   toSingleLineText
 } from "./entries.mjs";
 
-export function calculateVirtualRange(totalItems, rowHeight, scrollTop, viewportHeight, overscanPx) {
-  if (totalItems <= 0) {
-    return { start: 0, end: 0 };
-  }
-
-  const safeRowHeight = Math.max(1, Number(rowHeight || 1));
-  const safeScrollTop = Math.max(0, Number(scrollTop || 0));
-  const safeViewportHeight = Math.max(1, Number(viewportHeight || 1));
-  const safeOverscanPx = Math.max(0, Number(overscanPx || 0));
-  const start = Math.max(0, Math.floor((safeScrollTop - safeOverscanPx) / safeRowHeight));
-  const end = Math.min(
-    totalItems,
-    Math.ceil((safeScrollTop + safeViewportHeight + safeOverscanPx) / safeRowHeight)
-  );
-
-  return { start, end: Math.max(start + 1, end) };
-}
-
 export function collectDetailsNodes(node, detailsNodes = []) {
   if (!node || !node.children || node.children.length === 0) {
     return detailsNodes;
@@ -52,8 +34,7 @@ export function createRenderer(options) {
     syncVisibleNavItemBorders,
     onCardHover,
     onCardLeave,
-    onNavItemClick,
-    onVirtualNavItemClick
+    onNavItemClick
   } = options;
 
   function fallbackCopyText(text) {
@@ -647,57 +628,8 @@ export function createRenderer(options) {
     syncVisibleNavItemBorders();
   }
 
-  function createVirtualSpacer(className) {
-    const spacer = document.createElement("div");
-    spacer.className = className;
-    spacer.setAttribute("aria-hidden", "true");
-    return spacer;
-  }
-
-  function createVirtualCardShell(record) {
-    const entry = record.summary;
-    const card = document.createElement("div");
-    card.className = `e ${entry.cls || ""} virtual-entry-loading`;
-    card.id = entry.anchor_id || createAnchorId();
-    if (card.dataset) {
-      card.dataset.entryIndex = String(record.entryIndex);
-    }
-    if (entry.error) {
-      card.style.setProperty("--c", "var(--entry-error)");
-    }
-
-    card.addEventListener("mouseenter", () => {
-      onCardHover(card);
-    });
-    card.addEventListener("mouseleave", () => {
-      onCardLeave();
-    });
-
-    card.appendChild(createMetaRow(entry));
-    const loading = document.createElement("pre");
-    loading.textContent = "Loading entry...";
-    card.appendChild(loading);
-    return card;
-  }
-
-  function createVirtualNavItem(session, record) {
-    const entry = record.summary;
-    return createNavItem(entry, {
-      targetCardId: entry.anchor_id || "",
-      entryIndex: record.entryIndex,
-      onClick: () => onVirtualNavItemClick(session, record)
-    });
-  }
-
   return {
-    applyDetailsOpenState,
-    appendEntryCardBody,
-    createMetaRow,
-    createNavItem,
     createPanel,
-    createVirtualCardShell,
-    createVirtualNavItem,
-    createVirtualSpacer,
     openToolInputPanel,
     renderEntries
   };

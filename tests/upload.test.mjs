@@ -11,8 +11,6 @@ import {
   resolveToolRequestSummary,
   resolveToolNavLabel
 } from '../assets/js/entries.mjs';
-import { createMemoryEntryRecords } from '../assets/js/records.mjs';
-import { calculateVirtualRange } from '../assets/js/render.mjs';
 
 class ClassList {
   constructor() {
@@ -325,53 +323,27 @@ function createFile(name, text) {
   };
 }
 
-function createStreamingFile(name, text, chunkSize = 17) {
-  const encoder = new TextEncoder();
-  const decoder = new TextDecoder();
-  const bytes = encoder.encode(text);
+function createStreamCapableFile(name, text) {
   const counters = {
     streamCalls: 0,
-    textCalls: 0,
-    sliceTextCalls: 0
+    textCalls: 0
   };
 
   return {
     name,
-    size: bytes.length,
+    size: text.length,
     counters,
     stream() {
       counters.streamCalls += 1;
-      let offset = 0;
       return new ReadableStream({
         pull(controller) {
-          if (offset >= bytes.length) {
-            controller.close();
-            return;
-          }
-
-          const end = Math.min(bytes.length, offset + chunkSize);
-          controller.enqueue(bytes.slice(offset, end));
-          offset = end;
+          controller.close();
         }
       });
     },
-    slice(start, end) {
-      const safeStart = Math.max(0, Number(start || 0));
-      const safeEnd = Math.max(safeStart, Number(end || 0));
-      const sliceBytes = bytes.slice(safeStart, safeEnd);
-      return {
-        async text() {
-          counters.sliceTextCalls += 1;
-          return decoder.decode(sliceBytes);
-        },
-        async arrayBuffer() {
-          return sliceBytes.buffer.slice(sliceBytes.byteOffset, sliceBytes.byteOffset + sliceBytes.byteLength);
-        }
-      };
-    },
     async text() {
       counters.textCalls += 1;
-      throw new Error('text() should not be called for large streaming files');
+      return text;
     }
   };
 }
@@ -403,10 +375,10 @@ function getRenderedCards(api) {
   return collectChildrenByClass(api.outputEl, 'e');
 }
 
-test('pure JSONL parser reports malformed non-empty line numbers', () => {
+test('pure JSONL parser reports malformed physical line numbers', () => {
   assert.throws(
     () => parseJsonLines('{"ok":true}\n\n{"broken":'),
-    /Invalid JSON on line 2:/
+    /Invalid JSON on line 3:/
   );
 });
 
@@ -644,48 +616,6 @@ test('Agent shows description in request preview and right navigation label', as
   assert.equal(requestSummary.textContent, 'Agent');
   assert.ok(preview, 'Agent preview should be present');
   assert.equal(preview.textContent, ` ${agentDescription}`);
-});
-
-test('pure record helpers preserve anchors and truncate large nav summaries', () => {
-  let nextId = 0;
-  const records = createMemoryEntryRecords([
-    {
-      name: 'sample.jsonl',
-      entries: [
-        {
-          type: 'tool',
-          cls: 'tool',
-          anchor_id: 'existing-anchor',
-          nav_label: 'x'.repeat(260)
-        },
-        {
-          type: 'user',
-          cls: 'user',
-          nav_label: 'hello'
-        }
-      ]
-    }
-  ], {
-    createAnchorId() {
-      const value = `generated-${nextId}`;
-      nextId += 1;
-      return value;
-    }
-  });
-
-  assert.equal(records.length, 2);
-  assert.equal(records[0].summary.anchor_id, 'existing-anchor');
-  assert.equal(records[0].summary.has_details, true);
-  assert.equal(records[0].summary.nav_label.length, 240);
-  assert.equal(records[0].summary.nav_label.endsWith('…'), true);
-  assert.equal(records[1].summary.anchor_id, 'generated-0');
-  assert.equal(records[1].summary.has_details, false);
-});
-
-test('pure virtual range helper applies viewport and overscan bounds', () => {
-  assert.deepEqual(calculateVirtualRange(100, 30, 300, 90, 30), { start: 9, end: 14 });
-  assert.deepEqual(calculateVirtualRange(0, 30, 300, 90, 30), { start: 0, end: 0 });
-  assert.deepEqual(calculateVirtualRange(3, 0, 0, 0, 0), { start: 0, end: 1 });
 });
 
 test('Claude Code JSONL line schema defines versioned raw event and content block contracts', () => {
@@ -1397,29 +1327,22 @@ test('top-level Claude Code service events render visible cards and filter hook 
   assert.equal(cards[9].children[1].children[1].textContent.includes('"future-event"'), true);
 });
 
-test('unmatched tool_use renders a request-only tool card after streaming index completes', async () => {
-  const api = createHarness({
-    largeFileByteThreshold: 1,
-    virtualEntryHeight: 100,
-    virtualEntryGap: 0,
-    virtualContentOverscanPx: 0,
-    virtualNavOverscanRows: 0
-  });
-  api.mainColumnEl.clientHeight = 250;
-  api.navColumnEl.clientHeight = 90;
-  const file = createStreamingFile('pending-tool.jsonl', JSON.stringify({
+test('unmatched tool_use renders a request-only tool card after full parse', async () => {
+  const api = createHarness();
+  const file = createStreamCapableFile('pending-tool.jsonl', JSON.stringify({
     type: 'assistant',
     timestamp: '2026-04-24T12:32:00Z',
     message: {
       role: 'assistant',
       content: [{ type: 'tool_use', id: 'pending-tool', name: 'Bash', input: { command: 'echo pending' } }]
     }
-  }), 17);
+  }));
 
   await api.handleFiles([file]);
 
   const navItems = getRenderedNavItems(api);
-  assert.equal(file.counters.textCalls, 0);
+  assert.equal(file.counters.textCalls, 1);
+  assert.equal(file.counters.streamCalls, 0);
   assert.equal(navItems.length, 1);
   assert.equal(navItems[0].children[2].textContent, 'echo pending');
 
@@ -2471,52 +2394,29 @@ test('TodoWrite falls back to default tool panels when todos are empty or invali
   }
 });
 
-test('large files are indexed from stream without calling text and keep rendered DOM bounded', async () => {
-  const api = createHarness({
-    largeFileByteThreshold: 1,
-    virtualEntryHeight: 100,
-    virtualNavRowHeight: 30,
-    virtualContentOverscanPx: 0,
-    virtualNavOverscanRows: 0
-  });
-  api.mainColumnEl.clientHeight = 250;
-  api.navColumnEl.clientHeight = 90;
-
+test('large stream-capable files are fully read and render every entry', async () => {
+  const api = createHarness();
   const jsonlObjects = Array.from({ length: 60 }, (_, index) => ({
     type: 'user',
     timestamp: `2026-04-24T12:${String(index).padStart(2, '0')}:00Z`,
     message: { content: [{ type: 'text', text: `line ${index}` }] }
   }));
-  const file = createStreamingFile('large.jsonl', jsonlObjects.map((objectItem) => JSON.stringify(objectItem)).join('\n'), 19);
+  const file = createStreamCapableFile('large.jsonl', jsonlObjects.map((objectItem) => JSON.stringify(objectItem)).join('\n'));
 
   await api.handleFiles([file]);
 
   const fileSection = api.outputEl.children[0];
-  const virtualSummary = fileSection.children[1];
-  const feed = fileSection.children[2];
-  const contentItems = feed.children[1];
-  const navItems = api.navListEl.children[1];
+  const feed = fileSection.children[1];
 
-  assert.equal(file.counters.streamCalls, 1);
-  assert.equal(file.counters.textCalls, 0);
-  assert.equal(api.navListEl.classList.contains('virtual-nav-list'), true);
-  assert.match(virtualSummary.textContent, /Indexed 60 entries/);
-  assert.equal(contentItems.children.length <= 3, true);
-  assert.equal(navItems.children.length <= 3, true);
-  assert.match(api.statusEl.textContent, /Done\. Indexed 60 entries/);
+  assert.equal(file.counters.textCalls, 1);
+  assert.equal(file.counters.streamCalls, 0);
+  assert.equal(feed.children.length, 60);
+  assert.equal(api.navListEl.children.length, 60);
+  assert.match(api.statusEl.textContent, /Done\. Rendered 1 file\(s\)\./);
 });
 
-test('virtual navigation click mounts target tool entry and opens its request panel', async () => {
-  const api = createHarness({
-    largeFileByteThreshold: 1,
-    virtualEntryHeight: 100,
-    virtualNavRowHeight: 30,
-    virtualContentOverscanPx: 0,
-    virtualNavOverscanRows: 0
-  });
-  api.mainColumnEl.clientHeight = 250;
-  api.navColumnEl.clientHeight = 90;
-
+test('navigation click opens target tool entry after full parse', async () => {
+  const api = createHarness();
   const jsonlObjects = [
     ...Array.from({ length: 15 }, (_, index) => ({
       type: 'user',
@@ -2527,44 +2427,34 @@ test('virtual navigation click mounts target tool entry and opens its request pa
       type: 'assistant',
       timestamp: '2026-04-24T12:15:00Z',
       message: {
-        content: [{ type: 'tool_use', id: 'tool-virtual', name: 'Bash', input: { command: 'echo virtual' } }]
+        content: [{ type: 'tool_use', id: 'tool-full', name: 'Bash', input: { command: 'echo full' } }]
       }
     },
     {
       type: 'user',
       timestamp: '2026-04-24T12:15:01Z',
       message: {
-        content: [{ type: 'tool_result', tool_use_id: 'tool-virtual', content: 'virtual output' }]
+        content: [{ type: 'tool_result', tool_use_id: 'tool-full', content: 'full output' }]
       }
     }
   ];
-  const file = createStreamingFile('large-tools.jsonl', jsonlObjects.map((objectItem) => JSON.stringify(objectItem)).join('\n'), 23);
+  const file = createStreamCapableFile('large-tools.jsonl', jsonlObjects.map((objectItem) => JSON.stringify(objectItem)).join('\n'));
 
   await api.handleFiles([file]);
 
-  api.navColumnEl.scrollTop = 15 * 30;
-  for (const handler of api.navColumnEl.eventListeners.scroll || []) {
-    handler({
-      target: api.navColumnEl,
-      currentTarget: api.navColumnEl,
-      preventDefault() {},
-      stopPropagation() {}
-    });
-  }
-
-  const navItems = api.navListEl.children[1].children;
-  const toolNavItem = navItems.find((item) => item.dataset.entryIndex === '15');
-  assert.ok(toolNavItem, 'target tool nav item should be mounted');
+  const toolNavItem = api.navListEl.children[15];
+  assert.ok(toolNavItem, 'target tool nav item should be rendered');
 
   toolNavItem.click();
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   const fileSection = api.outputEl.children[0];
-  const feed = fileSection.children[2];
-  const contentItems = feed.children[1];
-  const toolCard = contentItems.children.find((card) => card.dataset.entryIndex === '15');
+  const feed = fileSection.children[1];
+  const toolCard = feed.children[15];
 
-  assert.ok(toolCard, 'target tool card should be mounted');
+  assert.equal(file.counters.textCalls, 1);
+  assert.equal(file.counters.streamCalls, 0);
+  assert.ok(toolCard, 'target tool card should be rendered');
   assert.equal(toolCard.classList.contains('tool'), true);
   assert.equal(toolCard.classList.contains('nav-target-highlight'), true);
   assert.equal(toolCard.children[1].tagName, 'DETAILS');
@@ -2572,25 +2462,23 @@ test('virtual navigation click mounts target tool entry and opens its request pa
   assert.equal(toolCard.children[1].children[0].textContent, 'Bash');
 });
 
-test('streaming JSONL parser reports invalid JSON line numbers across chunk boundaries', async () => {
-  const api = createHarness({
-    largeFileByteThreshold: 1,
-    streamChunkSize: 5
-  });
+test('full JSONL parser reports invalid physical line numbers', async () => {
+  const api = createHarness();
   const validLine = JSON.stringify({
     type: 'user',
     timestamp: '2026-04-24T12:00:00Z',
     message: { content: [{ type: 'text', text: 'ok' }] }
   });
-  const file = createStreamingFile('broken.jsonl', `${validLine}\r\n\r\n{"type":`, 5);
+  const file = createStreamCapableFile('broken.jsonl', `${validLine}\r\n\r\n{"type":`);
 
   await api.handleFiles([file]);
 
   const errorSection = api.outputEl.children[0];
   const pre = errorSection.children[1];
 
-  assert.equal(file.counters.textCalls, 0);
-  assert.equal(errorSection.children[0].textContent, 'Error');
-  assert.match(pre.textContent, /broken\.jsonl on line 3/);
-  assert.equal(api.statusEl.textContent, 'Could not render file.');
+  assert.equal(file.counters.textCalls, 1);
+  assert.equal(file.counters.streamCalls, 0);
+  assert.equal(errorSection.children[0].textContent, 'broken.jsonl');
+  assert.match(pre.textContent, /Invalid JSON on line 3/);
+  assert.equal(api.statusEl.textContent, 'Done. Rendered 1 file(s).');
 });

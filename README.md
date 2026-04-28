@@ -28,8 +28,6 @@ Example:
 
 - Upload one or multiple `.jsonl` files via drag-and-drop or file picker.
 - Parse logs and render structured message cards.
-- Stream and index large session files instead of loading the full JSONL into memory.
-- Recycle off-screen message and navigation rows for long histories.
 - Highlight entry types (`system`, `user`, `agent`, `tool`, `result`) and errors.
 - Show paired `tool request` / `tool result` panels with quick copy actions for JSON/text.
 - Navigate long sessions quickly using the side navigation list.

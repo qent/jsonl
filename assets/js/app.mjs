@@ -7,17 +7,6 @@ import {
   parseJsonl
 } from "./entries.mjs";
 import {
-  isCancelledError,
-  throwIfCancelled
-} from "./file-reader.mjs";
-import {
-  buildLargeFileIndex,
-  cacheVirtualEntry,
-  createMemoryEntryRecords,
-  loadEntryForRecord
-} from "./records.mjs";
-import {
-  calculateVirtualRange,
   collectDetailsNodes,
   createRenderer
 } from "./render.mjs";
@@ -37,6 +26,18 @@ import {
  * @property {Function} [setTimeout]
  * @property {Function} [clearTimeout]
  */
+
+function throwIfCancelled(loadToken) {
+  if (loadToken && loadToken.cancelled) {
+    const error = new Error("Loading cancelled");
+    error.name = "AbortError";
+    throw error;
+  }
+}
+
+function isCancelledError(error) {
+  return Boolean(error && error.name === "AbortError");
+}
 
 export function createJsonlViewerApp(deps = {}) {
   const document = deps.document
@@ -86,12 +87,6 @@ export function createJsonlViewerApp(deps = {}) {
     const outputEl = document.getElementById(ELEMENT_IDS.output);
     const config = normalizeConfig(deps);
     const {
-      largeFileByteThreshold,
-      largeEntryThreshold,
-      virtualEntryHeight,
-      virtualNavRowHeight,
-      virtualContentOverscanPx,
-      virtualNavOverscanRows,
       navDesktopBreakpoint
     } = config;
     const navTargetHighlightClassName = CSS_CLASSES.navTargetHighlight;
@@ -102,7 +97,6 @@ export function createJsonlViewerApp(deps = {}) {
     let isNavAutoScrolling = false;
     let isNavFocusActive = false;
     let activeLoadToken = null;
-    let activeVirtualSession = null;
     const { setStatus } = createStatusController(statusEl);
     const {
       clearCopyToastTimer,
@@ -398,16 +392,6 @@ export function createJsonlViewerApp(deps = {}) {
     }
 
     function setAllHistoryDetailsOpenState(nextOpenState) {
-      if (activeVirtualSession) {
-        const shouldOpenVirtual = Boolean(nextOpenState);
-        activeVirtualSession.detailsOpenState = shouldOpenVirtual;
-        const mountedCards = activeVirtualSession.mountedCards.values();
-        for (const card of mountedCards) {
-          applyDetailsOpenState(card, shouldOpenVirtual);
-        }
-        return;
-      }
-
       const detailsNodes = getHistoryDetailsNodes();
       if (detailsNodes.length === 0) {
         return;
@@ -423,11 +407,8 @@ export function createJsonlViewerApp(deps = {}) {
       const hasRenderedContent = typeof hasContent === "boolean"
         ? hasContent
         : outputEl.childElementCount > 0;
-      const canToggleVirtualHistory = Boolean(activeVirtualSession
-        && hasRenderedContent
-        && activeVirtualSession.records.some((record) => record.summary && record.summary.has_details));
-      const detailsNodes = hasRenderedContent && !canToggleVirtualHistory ? getHistoryDetailsNodes() : [];
-      const canToggleHistory = canToggleVirtualHistory || (hasRenderedContent && detailsNodes.length > 0);
+      const detailsNodes = hasRenderedContent ? getHistoryDetailsNodes() : [];
+      const canToggleHistory = hasRenderedContent && detailsNodes.length > 0;
 
       if (collapseAllBtn) {
         collapseAllBtn.hidden = !canToggleHistory;
@@ -490,12 +471,6 @@ export function createJsonlViewerApp(deps = {}) {
     }
 
     const {
-      applyDetailsOpenState,
-      appendEntryCardBody,
-      createMetaRow,
-      createVirtualCardShell,
-      createVirtualNavItem,
-      createVirtualSpacer,
       openToolInputPanel,
       renderEntries
     } = createRenderer({
@@ -515,12 +490,6 @@ export function createJsonlViewerApp(deps = {}) {
           behavior: "instant"
         });
         applyNavTargetHighlight(targetCard);
-      },
-      onVirtualNavItemClick(session, record) {
-        scrollVirtualContentToEntry(session, record.entryIndex, {
-          openTool: true,
-          highlight: true
-        });
       }
     });
 
@@ -668,11 +637,7 @@ export function createJsonlViewerApp(deps = {}) {
 
     function clearNavTargetHighlightOnScroll(event) {
       if (event && event.currentTarget === mainColumnEl) {
-        renderVirtualContentWindow(activeVirtualSession);
         syncVisibleNavItemBorders();
-      }
-      if (event && event.currentTarget === navColumnEl) {
-        renderVirtualNavWindow(activeVirtualSession);
       }
       if (isNavAutoScrolling) {
         return;
@@ -700,248 +665,6 @@ export function createJsonlViewerApp(deps = {}) {
       return `entry-${current}`;
     }
 
-    function resolveViewportHeight(element, fallbackHeight = 900) {
-      const clientHeight = Number(element && element.clientHeight);
-      if (Number.isFinite(clientHeight) && clientHeight > 0) {
-        return clientHeight;
-      }
-
-      if (element && typeof element.getBoundingClientRect === "function") {
-        const rect = element.getBoundingClientRect();
-        if (rect && Number.isFinite(rect.height) && rect.height > 0) {
-          return rect.height;
-        }
-      }
-
-      if (typeof window !== "undefined" && Number.isFinite(window.innerHeight) && window.innerHeight > 0) {
-        return window.innerHeight;
-      }
-
-      return fallbackHeight;
-    }
-
-    function setSpacerHeight(spacerEl, height) {
-      if (!spacerEl || !spacerEl.style) {
-        return;
-      }
-
-      spacerEl.style.height = `${Math.max(0, Math.round(height))}px`;
-    }
-
-    async function hydrateVirtualCard(session, record, card) {
-      const cacheKey = String(record.entryIndex);
-      try {
-        let entry = record.entry;
-        if (!entry && session.entryCache.has(cacheKey)) {
-          const cached = session.entryCache.get(cacheKey);
-          session.entryCache.delete(cacheKey);
-          session.entryCache.set(cacheKey, cached);
-          entry = cached.entry;
-        }
-        if (!entry) {
-          entry = await loadEntryForRecord(record, { config });
-          cacheVirtualEntry(session, record, entry, config);
-        }
-
-        if (session !== activeVirtualSession || session.mountedCards.get(record.entryIndex) !== card) {
-          return;
-        }
-
-        card.textContent = "";
-        card.className = `e ${entry.cls || ""}`;
-        card.id = record.summary.anchor_id;
-        if (card.dataset) {
-          card.dataset.entryIndex = String(record.entryIndex);
-        }
-        if (entry.error) {
-          card.style.setProperty("--c", "var(--entry-error)");
-        }
-        appendEntryCardBody(card, entry);
-        applyDetailsOpenState(card, session.detailsOpenState);
-
-        if (record.pendingOpenTool) {
-          openToolInputPanel(card);
-          record.pendingOpenTool = false;
-        }
-        if (record.pendingHighlight) {
-          applyNavTargetHighlight(card);
-          record.pendingHighlight = false;
-        }
-      } catch (error) {
-        if (session !== activeVirtualSession || session.mountedCards.get(record.entryIndex) !== card) {
-          return;
-        }
-        card.textContent = "";
-        card.appendChild(createMetaRow(record.summary));
-        const pre = document.createElement("pre");
-        pre.textContent = String(error && error.message ? error.message : error);
-        card.appendChild(pre);
-      }
-    }
-
-    function renderVirtualContentWindow(session) {
-      if (!session || session !== activeVirtualSession) {
-        return Promise.resolve();
-      }
-
-      const viewportHeight = resolveViewportHeight(mainColumnEl);
-      const range = calculateVirtualRange(
-        session.records.length,
-        virtualEntryHeight,
-        mainColumnEl.scrollTop,
-        viewportHeight,
-        virtualContentOverscanPx
-      );
-
-      if (range.start === session.contentStart && range.end === session.contentEnd) {
-        return Promise.resolve();
-      }
-
-      session.contentStart = range.start;
-      session.contentEnd = range.end;
-      session.contentItemsEl.textContent = "";
-      session.mountedCards.clear();
-      setSpacerHeight(session.contentTopSpacerEl, range.start * virtualEntryHeight);
-      setSpacerHeight(session.contentBottomSpacerEl, (session.records.length - range.end) * virtualEntryHeight);
-
-      const hydrationPromises = [];
-      for (let index = range.start; index < range.end; index += 1) {
-        const record = session.records[index];
-        const card = createVirtualCardShell(record);
-        session.mountedCards.set(index, card);
-        session.contentItemsEl.appendChild(card);
-        hydrationPromises.push(hydrateVirtualCard(session, record, card));
-      }
-
-      syncVisibleNavItemBorders();
-      return Promise.all(hydrationPromises).then(() => undefined);
-    }
-
-    function renderVirtualNavWindow(session) {
-      if (!session || session !== activeVirtualSession) {
-        return;
-      }
-
-      const viewportHeight = resolveViewportHeight(navColumnEl);
-      const overscanPx = virtualNavOverscanRows * virtualNavRowHeight;
-      const range = calculateVirtualRange(
-        session.records.length,
-        virtualNavRowHeight,
-        navColumnEl.scrollTop,
-        viewportHeight,
-        overscanPx
-      );
-
-      if (range.start === session.navStart && range.end === session.navEnd) {
-        return;
-      }
-
-      session.navStart = range.start;
-      session.navEnd = range.end;
-      session.navItemsEl.textContent = "";
-      setSpacerHeight(session.navTopSpacerEl, range.start * virtualNavRowHeight);
-      setSpacerHeight(session.navBottomSpacerEl, (session.records.length - range.end) * virtualNavRowHeight);
-
-      for (let index = range.start; index < range.end; index += 1) {
-        session.navItemsEl.appendChild(createVirtualNavItem(session, session.records[index]));
-      }
-    }
-
-    function scrollVirtualContentToEntry(session, entryIndex, options = {}) {
-      if (!session || session !== activeVirtualSession) {
-        return;
-      }
-
-      const record = session.records[entryIndex];
-      if (!record) {
-        return;
-      }
-
-      record.pendingOpenTool = Boolean(options.openTool);
-      record.pendingHighlight = Boolean(options.highlight);
-      const viewportHeight = resolveViewportHeight(mainColumnEl);
-      mainColumnEl.scrollTop = Math.max(0, (entryIndex * virtualEntryHeight) - (viewportHeight / 2));
-      markNavAutoScrolling();
-      renderVirtualContentWindow(session).then(() => {
-        const card = session.mountedCards.get(entryIndex);
-        if (!card) {
-          return;
-        }
-        if (options.openTool) {
-          openToolInputPanel(card);
-        }
-        if (options.highlight) {
-          applyNavTargetHighlight(card);
-        }
-      });
-    }
-
-    function createVirtualSession(files, records, options = {}) {
-      const section = document.createElement("section");
-      section.className = "file-block virtual-file-block";
-
-      const title = document.createElement("h2");
-      title.className = "file-title";
-      title.textContent = files.length === 1
-        ? String(files[0].name || "large.jsonl")
-        : `${files.length} files`;
-      section.appendChild(title);
-
-      const summary = document.createElement("p");
-      summary.className = "virtual-summary";
-      summary.textContent = options.source === "memory"
-        ? `Virtualized ${records.length} entries.`
-        : `Indexed ${records.length} entries without loading the full file into memory.`;
-      section.appendChild(summary);
-
-      const feed = document.createElement("div");
-      feed.className = "feed virtual-feed";
-      const contentTopSpacerEl = createVirtualSpacer("virtual-spacer virtual-content-spacer");
-      const contentItemsEl = document.createElement("div");
-      contentItemsEl.className = "virtual-items virtual-content-items";
-      const contentBottomSpacerEl = createVirtualSpacer("virtual-spacer virtual-content-spacer");
-      feed.appendChild(contentTopSpacerEl);
-      feed.appendChild(contentItemsEl);
-      feed.appendChild(contentBottomSpacerEl);
-      section.appendChild(feed);
-
-      navListEl.textContent = "";
-      navListEl.classList.add("virtual-nav-list");
-      const navTopSpacerEl = createVirtualSpacer("virtual-spacer virtual-nav-spacer");
-      const navItemsEl = document.createElement("div");
-      navItemsEl.className = "virtual-items virtual-nav-items";
-      const navBottomSpacerEl = createVirtualSpacer("virtual-spacer virtual-nav-spacer");
-      navListEl.appendChild(navTopSpacerEl);
-      navListEl.appendChild(navItemsEl);
-      navListEl.appendChild(navBottomSpacerEl);
-
-      outputEl.appendChild(section);
-
-      const session = {
-        files,
-        records,
-        source: options.source || "file",
-        contentTopSpacerEl,
-        contentItemsEl,
-        contentBottomSpacerEl,
-        navTopSpacerEl,
-        navItemsEl,
-        navBottomSpacerEl,
-        contentStart: -1,
-        contentEnd: -1,
-        navStart: -1,
-        navEnd: -1,
-        mountedCards: new Map(),
-        entryCache: new Map(),
-        cacheBytes: 0,
-        detailsOpenState: null
-      };
-
-      activeVirtualSession = session;
-      renderVirtualNavWindow(session);
-      return renderVirtualContentWindow(session).then(() => session);
-    }
-
     async function handleFiles(fileList) {
       const files = [...fileList].filter((file) => file && file.size >= 0);
       if (files.length === 0) {
@@ -952,38 +675,15 @@ export function createJsonlViewerApp(deps = {}) {
       closeNavFocusMode();
       clearNavTargetHighlight();
       clearContentHoverNavItem();
-      activeVirtualSession = null;
       outputEl.textContent = "";
       navListEl.textContent = "";
-      navListEl.classList.remove("virtual-nav-list");
       mainColumnEl.scrollTop = 0;
       navColumnEl.scrollTop = 0;
       syncUiState({ rendering: true });
       setStatus(`Rendering ${files.length} file(s)...`);
 
       try {
-        const shouldStream = files.some((file) => Number(file.size || 0) > largeFileByteThreshold);
-        if (shouldStream) {
-          setStatus(`Indexing ${files.length} large file(s)...`);
-          const records = await buildLargeFileIndex(files, {
-            loadToken,
-            config,
-            createAnchorId: nextEntryAnchorId,
-            setStatus,
-            setTimeout
-          });
-          throwIfCancelled(loadToken);
-          outputEl.textContent = "";
-          navListEl.textContent = "";
-          await createVirtualSession(files, records, { source: "file" });
-          throwIfCancelled(loadToken);
-          syncUiState();
-          setStatus(`Done. Indexed ${records.length} entries from ${files.length} file(s).`, "ok");
-          return;
-        }
-
         const parsedFiles = [];
-        let totalEntries = 0;
         for (const file of files) {
           throwIfCancelled(loadToken);
           const fileResult = {
@@ -997,26 +697,11 @@ export function createJsonlViewerApp(deps = {}) {
             const text = await file.text();
             throwIfCancelled(loadToken);
             fileResult.entries = parseJsonl(text, { config, createAnchorId: nextEntryAnchorId });
-            totalEntries += fileResult.entries.length;
           } catch (error) {
             fileResult.error = error;
           }
 
           parsedFiles.push(fileResult);
-        }
-
-        const canVirtualizeParsedFiles = parsedFiles.every((fileResult) => !fileResult.error)
-          && totalEntries > largeEntryThreshold;
-        if (canVirtualizeParsedFiles) {
-          const records = createMemoryEntryRecords(parsedFiles, {
-            config,
-            createAnchorId: nextEntryAnchorId
-          });
-          await createVirtualSession(files, records, { source: "memory" });
-          throwIfCancelled(loadToken);
-          syncUiState();
-          setStatus(`Done. Virtualized ${records.length} entries from ${files.length} file(s).`, "ok");
-          return;
         }
 
         for (const fileResult of parsedFiles) {
@@ -1049,8 +734,6 @@ export function createJsonlViewerApp(deps = {}) {
 
         outputEl.textContent = "";
         navListEl.textContent = "";
-        navListEl.classList.remove("virtual-nav-list");
-        activeVirtualSession = null;
 
         const section = document.createElement("section");
         section.className = "file-block";
@@ -1077,10 +760,8 @@ export function createJsonlViewerApp(deps = {}) {
       closeNavFocusMode();
       clearNavTargetHighlight();
       clearContentHoverNavItem();
-      activeVirtualSession = null;
       outputEl.textContent = "";
       navListEl.textContent = "";
-      navListEl.classList.remove("virtual-nav-list");
       syncVisibleNavItemBorders();
       setStatus("");
       fileInput.value = "";
@@ -1092,8 +773,6 @@ export function createJsonlViewerApp(deps = {}) {
 
     function onWindowResize() {
       syncClearButtonPosition();
-      renderVirtualContentWindow(activeVirtualSession);
-      renderVirtualNavWindow(activeVirtualSession);
       syncVisibleNavItemBorders();
       setNavFocusActive(isNavFocusActive);
     }

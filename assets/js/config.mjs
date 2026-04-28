@@ -1,14 +1,5 @@
 /**
  * @typedef {Object} AppConfig
- * @property {number} largeFileByteThreshold
- * @property {number} largeEntryThreshold
- * @property {number} streamChunkSize
- * @property {number} virtualEntryHeight
- * @property {number} virtualNavRowHeight
- * @property {number} virtualContentOverscanPx
- * @property {number} virtualNavOverscanRows
- * @property {number} lazyEntryCacheLimit
- * @property {number} lazyEntryCacheByteLimit
  * @property {number} largeNavLabelMaxLength
  * @property {number} toolSummaryInputPreviewMaxLength
  * @property {number} toolSummaryResultPreviewMaxLength
@@ -17,15 +8,6 @@
  */
 
 export const DEFAULT_CONFIG = Object.freeze({
-  largeFileByteThreshold: 25 * 1024 * 1024,
-  largeEntryThreshold: 1500,
-  streamChunkSize: 1024 * 1024,
-  virtualEntryHeight: 220,
-  virtualNavRowHeight: 30,
-  virtualContentOverscanPx: 1200,
-  virtualNavOverscanRows: 30,
-  lazyEntryCacheLimit: 120,
-  lazyEntryCacheByteLimit: 32 * 1024 * 1024,
   largeNavLabelMaxLength: 240,
   toolSummaryInputPreviewMaxLength: 90,
   toolSummaryResultPreviewMaxLength: 110,
@@ -77,51 +59,6 @@ function numberOption(value, fallback, minValue) {
  */
 export function normalizeConfig(deps = {}) {
   return {
-    largeFileByteThreshold: numberOption(
-      deps.largeFileByteThreshold,
-      DEFAULT_CONFIG.largeFileByteThreshold,
-      0
-    ),
-    largeEntryThreshold: numberOption(
-      deps.largeEntryThreshold,
-      DEFAULT_CONFIG.largeEntryThreshold,
-      1
-    ),
-    streamChunkSize: numberOption(
-      deps.streamChunkSize,
-      DEFAULT_CONFIG.streamChunkSize,
-      1024
-    ),
-    virtualEntryHeight: numberOption(
-      deps.virtualEntryHeight,
-      DEFAULT_CONFIG.virtualEntryHeight,
-      64
-    ),
-    virtualNavRowHeight: numberOption(
-      deps.virtualNavRowHeight,
-      DEFAULT_CONFIG.virtualNavRowHeight,
-      20
-    ),
-    virtualContentOverscanPx: numberOption(
-      deps.virtualContentOverscanPx,
-      DEFAULT_CONFIG.virtualContentOverscanPx,
-      0
-    ),
-    virtualNavOverscanRows: numberOption(
-      deps.virtualNavOverscanRows,
-      DEFAULT_CONFIG.virtualNavOverscanRows,
-      0
-    ),
-    lazyEntryCacheLimit: numberOption(
-      deps.lazyEntryCacheLimit,
-      DEFAULT_CONFIG.lazyEntryCacheLimit,
-      1
-    ),
-    lazyEntryCacheByteLimit: numberOption(
-      deps.lazyEntryCacheByteLimit,
-      DEFAULT_CONFIG.lazyEntryCacheByteLimit,
-      1024
-    ),
     largeNavLabelMaxLength: numberOption(
       deps.largeNavLabelMaxLength,
       DEFAULT_CONFIG.largeNavLabelMaxLength,
