@@ -426,11 +426,18 @@ test('pure tool helpers normalize todo items and navigation labels', () => {
   );
   assert.equal(resolveToolNavLabel('Read', { file_path: '/tmp/in.jsonl' }, 'tool'), 'Read: /tmp/in.jsonl');
   assert.equal(resolveToolNavLabel('Grep', { pattern: 'TODO' }, 'tool'), 'Grep: TODO');
+  assert.equal(resolveToolNavLabel('WebSearch', { query: 'status page' }, 'tool'), 'WebSearch: status page');
+  assert.equal(resolveToolNavLabel('WebFetch', { url: 'https://example.com/status' }, 'tool'), 'WebFetch: https://example.com/status');
+  assert.equal(resolveToolNavLabel('Edit', { file_path: '/tmp/patch.diff' }, 'tool'), 'Edit: /tmp/patch.diff');
   assert.equal(resolveToolNavLabel('Skill', { skill: 'Plan markdown' }, 'tool'), '/Plan markdown');
 });
 
 test('pure tool request summaries preview Edit paths and AskUserQuestion choices', () => {
   const editSummary = resolveToolRequestSummary('Edit', { file_path: '/tmp/source/file.mjs' });
+  const globSummary = resolveToolRequestSummary('Glob', { pattern: '**/*.mjs' });
+  const webSearchSummary = resolveToolRequestSummary('WebSearch', { query: 'latest incidents' });
+  const webFetchSummary = resolveToolRequestSummary('WebFetch', { url: 'https://example.com/incidents' });
+  const writeSummary = resolveToolRequestSummary('Write', { file_path: '/tmp/out.jsonl' });
   const askSummary = resolveToolRequestSummary('AskUserQuestion', {
     questions: [
       {
@@ -447,11 +454,126 @@ test('pure tool request summaries preview Edit paths and AskUserQuestion choices
     label: 'Edit',
     preview: '/tmp/source/file.mjs'
   });
+  assert.deepEqual(globSummary, {
+    label: 'Glob',
+    preview: '**/*.mjs'
+  });
+  assert.deepEqual(webSearchSummary, {
+    label: 'WebSearch',
+    preview: 'latest incidents'
+  });
+  assert.deepEqual(webFetchSummary, {
+    label: 'WebFetch',
+    preview: 'https://example.com/incidents'
+  });
+  assert.deepEqual(writeSummary, {
+    label: 'Write',
+    preview: '/tmp/out.jsonl'
+  });
   assert.equal(askSummary.label, 'AskUserQuestion');
   assert.equal(
     askSummary.preview,
     'Which import path should be used? Re-export: Keep thin modules in build/yandex/ai. Move data: Move only file_info and README.'
   );
+});
+
+test('WebSearch and WebFetch show query and url in request preview and right navigation', async () => {
+  const api = createHarness();
+  const webSearchQuery = 'latest status page incidents';
+  const webFetchUrl = 'https://example.com/status?region=eu';
+  const jsonlObjects = [
+    {
+      type: 'assistant',
+      timestamp: '2026-04-24T12:30:00Z',
+      message: {
+        content: [{ type: 'tool_use', id: 'tool-web-1', name: 'WebSearch', input: { query: webSearchQuery } }]
+      }
+    },
+    {
+      type: 'user',
+      timestamp: '2026-04-24T12:30:01Z',
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: 'tool-web-1', content: 'search ok' }]
+      }
+    },
+    {
+      type: 'assistant',
+      timestamp: '2026-04-24T12:30:02Z',
+      message: {
+        content: [{ type: 'tool_use', id: 'tool-web-2', name: 'WebFetch', input: { url: webFetchUrl } }]
+      }
+    },
+    {
+      type: 'user',
+      timestamp: '2026-04-24T12:30:03Z',
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: 'tool-web-2', content: 'fetch ok' }]
+      }
+    }
+  ];
+  const jsonl = jsonlObjects.map((objectItem) => JSON.stringify(objectItem)).join('\n');
+
+  await api.handleFiles([createFile('sample.jsonl', jsonl)]);
+
+  const navLabels = api.navListEl.children.map((item) => item.children[2].textContent);
+  assert.deepEqual(navLabels, [
+    `WebSearch: ${webSearchQuery}`,
+    `WebFetch: ${webFetchUrl}`
+  ]);
+
+  const webSearchNavText = api.navListEl.children[0].children[2];
+  const webFetchNavText = api.navListEl.children[1].children[2];
+  assert.equal(webSearchNavText.children[0].tagName, 'STRONG');
+  assert.equal(webSearchNavText.children[0].textContent, 'WebSearch:');
+  assert.equal(webSearchNavText.children[1].textContent, ` ${webSearchQuery}`);
+  assert.equal(webFetchNavText.children[0].tagName, 'STRONG');
+  assert.equal(webFetchNavText.children[0].textContent, 'WebFetch:');
+  assert.equal(webFetchNavText.children[1].textContent, ` ${webFetchUrl}`);
+
+  const cards = getRenderedCards(api);
+  assert.equal(cards.length, 2);
+
+  const webSearchRequestSummary = cards[0].children[1].children[0];
+  const webFetchRequestSummary = cards[1].children[1].children[0];
+  const webSearchPreview = findChildByClass(webSearchRequestSummary, 'summary-preview');
+  const webFetchPreview = findChildByClass(webFetchRequestSummary, 'summary-preview');
+
+  assert.equal(webSearchRequestSummary.textContent, 'WebSearch');
+  assert.equal(webFetchRequestSummary.textContent, 'WebFetch');
+  assert.ok(webSearchPreview, 'WebSearch preview should be present');
+  assert.ok(webFetchPreview, 'WebFetch preview should be present');
+  assert.equal(webSearchPreview.textContent, ` ${webSearchQuery}`);
+  assert.equal(webFetchPreview.textContent, ` ${webFetchUrl}`);
+});
+
+test('Edit shows file_path in right navigation label', async () => {
+  const api = createHarness();
+  const editPath = '/tmp/src/app.mjs';
+  const jsonlObjects = [
+    {
+      type: 'assistant',
+      timestamp: '2026-04-24T12:31:00Z',
+      message: {
+        content: [{ type: 'tool_use', id: 'tool-edit-1', name: 'Edit', input: { file_path: editPath, old_string: 'old', new_string: 'new' } }]
+      }
+    },
+    {
+      type: 'user',
+      timestamp: '2026-04-24T12:31:01Z',
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: 'tool-edit-1', content: 'edit ok' }]
+      }
+    }
+  ];
+  const jsonl = jsonlObjects.map((objectItem) => JSON.stringify(objectItem)).join('\n');
+
+  await api.handleFiles([createFile('sample.jsonl', jsonl)]);
+
+  const navText = api.navListEl.children[0].children[2];
+  assert.equal(navText.textContent, `Edit: ${editPath}`);
+  assert.equal(navText.children[0].tagName, 'STRONG');
+  assert.equal(navText.children[0].textContent, 'Edit:');
+  assert.equal(navText.children[1].textContent, ` ${editPath}`);
 });
 
 test('pure record helpers preserve anchors and truncate large nav summaries', () => {
@@ -1447,6 +1569,7 @@ test('tool panel summaries render contextual previews and truncation rules', asy
   const api = createHarness();
   const longReadPath = `/tmp/${'segment-'.repeat(12)}file.jsonl`;
   const grepPattern = 'TODO\\s+items';
+  const globPattern = '**/*.{mjs,js}';
   const longBashCommand = `printf "start" && ${'echo very-long-command-part '.repeat(5)}done`;
   const longSuccessResult = `success output ${'x'.repeat(120)}`;
   const longErrorResult = `line one\n${'error-token '.repeat(20)}`;
@@ -1505,52 +1628,66 @@ test('tool panel summaries render contextual previews and truncation rules', asy
       type: 'assistant',
       timestamp: '2026-04-24T12:20:06Z',
       message: {
-        content: [{ type: 'tool_use', id: 'tool-summary-4', name: 'Bash', input: { command: longBashCommand } }]
+        content: [{ type: 'tool_use', id: 'tool-summary-4', name: 'Glob', input: { pattern: globPattern } }]
       }
     },
     {
       type: 'user',
       timestamp: '2026-04-24T12:20:07Z',
       message: {
-        content: [{ type: 'tool_result', tool_use_id: 'tool-summary-4', content: longSuccessResult }]
+        content: [{ type: 'tool_result', tool_use_id: 'tool-summary-4', content: 'glob ok' }]
       }
     },
     {
       type: 'assistant',
       timestamp: '2026-04-24T12:20:08Z',
       message: {
-        content: [{ type: 'tool_use', id: 'tool-summary-5', name: 'Write', input: { file_path: '/tmp/out.jsonl' } }]
+        content: [{ type: 'tool_use', id: 'tool-summary-5', name: 'Bash', input: { command: longBashCommand } }]
       }
     },
     {
       type: 'user',
       timestamp: '2026-04-24T12:20:09Z',
       message: {
-        content: [{ type: 'tool_result', tool_use_id: 'tool-summary-5', content: longErrorResult, is_error: true }]
+        content: [{ type: 'tool_result', tool_use_id: 'tool-summary-5', content: longSuccessResult }]
       }
     },
     {
       type: 'assistant',
       timestamp: '2026-04-24T12:20:10Z',
       message: {
-        content: [{ type: 'tool_use', id: 'tool-summary-6', name: 'Edit', input: { file_path: editPath, old_string: 'old', new_string: 'new' } }]
+        content: [{ type: 'tool_use', id: 'tool-summary-6', name: 'Write', input: { file_path: '/tmp/out.jsonl' } }]
       }
     },
     {
       type: 'user',
       timestamp: '2026-04-24T12:20:11Z',
       message: {
-        content: [{ type: 'tool_result', tool_use_id: 'tool-summary-6', content: 'edit ok' }]
+        content: [{ type: 'tool_result', tool_use_id: 'tool-summary-6', content: longErrorResult, is_error: true }]
       }
     },
     {
       type: 'assistant',
       timestamp: '2026-04-24T12:20:12Z',
       message: {
+        content: [{ type: 'tool_use', id: 'tool-summary-7', name: 'Edit', input: { file_path: editPath, old_string: 'old', new_string: 'new' } }]
+      }
+    },
+    {
+      type: 'user',
+      timestamp: '2026-04-24T12:20:13Z',
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: 'tool-summary-7', content: 'edit ok' }]
+      }
+    },
+    {
+      type: 'assistant',
+      timestamp: '2026-04-24T12:20:14Z',
+      message: {
         content: [
           {
             type: 'tool_use',
-            id: 'tool-summary-7',
+            id: 'tool-summary-8',
             name: 'AskUserQuestion',
             input: {
               questions: [
@@ -1580,9 +1717,9 @@ test('tool panel summaries render contextual previews and truncation rules', asy
     },
     {
       type: 'user',
-      timestamp: '2026-04-24T12:20:13Z',
+      timestamp: '2026-04-24T12:20:15Z',
       message: {
-        content: [{ type: 'tool_result', tool_use_id: 'tool-summary-7', content: 'answered' }]
+        content: [{ type: 'tool_result', tool_use_id: 'tool-summary-8', content: 'answered' }]
       }
     }
   ];
@@ -1602,21 +1739,25 @@ test('tool panel summaries render contextual previews and truncation rules', asy
   const fileSection = api.outputEl.children[0];
   const feed = fileSection.children[1];
   const cards = feed.children;
-  assert.equal(cards.length, 7);
+  assert.equal(cards.length, 8);
 
   const skillRequestSummary = cards[0].children[1].children[0];
   const readRequestSummary = cards[1].children[1].children[0];
   const grepRequestSummary = cards[2].children[1].children[0];
-  const bashRequestSummary = cards[3].children[1].children[0];
-  const bashResultSummary = cards[3].children[2].children[0];
-  const writeErrorResultSummary = cards[4].children[2].children[0];
-  const editRequestSummary = cards[5].children[1].children[0];
-  const askRequestSummary = cards[6].children[1].children[0];
+  const globRequestSummary = cards[3].children[1].children[0];
+  const bashRequestSummary = cards[4].children[1].children[0];
+  const bashResultSummary = cards[4].children[2].children[0];
+  const writeRequestSummary = cards[5].children[1].children[0];
+  const writeErrorResultSummary = cards[5].children[2].children[0];
+  const editRequestSummary = cards[6].children[1].children[0];
+  const askRequestSummary = cards[7].children[1].children[0];
 
   const skillPreview = findChildByClass(skillRequestSummary, 'summary-preview');
   const readPreview = findChildByClass(readRequestSummary, 'summary-preview');
   const grepPreview = findChildByClass(grepRequestSummary, 'summary-preview');
+  const globPreview = findChildByClass(globRequestSummary, 'summary-preview');
   const bashPreview = findChildByClass(bashRequestSummary, 'summary-preview');
+  const writePreview = findChildByClass(writeRequestSummary, 'summary-preview');
   const bashResultPreview = findChildByClass(bashResultSummary, 'summary-preview');
   const writeErrorPreview = findChildByClass(writeErrorResultSummary, 'summary-preview');
   const editPreview = findChildByClass(editRequestSummary, 'summary-preview');
@@ -1625,7 +1766,9 @@ test('tool panel summaries render contextual previews and truncation rules', asy
   assert.equal(skillRequestSummary.textContent, 'Skill');
   assert.equal(readRequestSummary.textContent, 'Read');
   assert.equal(grepRequestSummary.textContent, 'Grep');
+  assert.equal(globRequestSummary.textContent, 'Glob');
   assert.equal(bashRequestSummary.textContent, 'Bash');
+  assert.equal(writeRequestSummary.textContent, 'Write');
   assert.equal(bashResultSummary.textContent, '');
   assert.equal(writeErrorResultSummary.textContent, '');
   assert.equal(editRequestSummary.textContent, 'Edit');
@@ -1634,7 +1777,9 @@ test('tool panel summaries render contextual previews and truncation rules', asy
   assert.ok(skillPreview, 'Skill preview should be present');
   assert.ok(readPreview, 'Read preview should be present');
   assert.ok(grepPreview, 'Grep preview should be present');
+  assert.ok(globPreview, 'Glob preview should be present');
   assert.ok(bashPreview, 'Bash preview should be present');
+  assert.ok(writePreview, 'Write preview should be present');
   assert.ok(bashResultPreview, 'successful result preview should be present');
   assert.ok(writeErrorPreview, 'error result preview should be present');
   assert.ok(editPreview, 'Edit file path preview should be present');
@@ -1643,7 +1788,9 @@ test('tool panel summaries render contextual previews and truncation rules', asy
   assert.equal(skillPreview.textContent, ' /Plan markdown');
   assert.equal(readPreview.textContent, ` ${truncateStart(longReadPath, 90)}`);
   assert.equal(grepPreview.textContent, ` ${toSingleLine(grepPattern)}`);
+  assert.equal(globPreview.textContent, ` ${toSingleLine(globPattern)}`);
   assert.equal(bashPreview.textContent, ` ${truncateEnd(longBashCommand, 90)}`);
+  assert.equal(writePreview.textContent, ' /tmp/out.jsonl');
   assert.equal(bashResultPreview.textContent, truncateEnd(longSuccessResult, 110));
   assert.equal(writeErrorPreview.textContent, truncateEnd(longErrorResult, 110));
   assert.equal(editPreview.textContent, ` ${editPath}`);

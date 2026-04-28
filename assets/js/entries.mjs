@@ -247,6 +247,22 @@ export function resolveToolRequestSummary(toolName, toolInput, config = DEFAULT_
       label: "Grep",
       preview: toSingleLineText(input.pattern)
     }),
+    Glob: () => ({
+      label: "Glob",
+      preview: toSingleLineText(input.pattern)
+    }),
+    WebSearch: () => ({
+      label: "WebSearch",
+      preview: toSingleLineText(input.query)
+    }),
+    WebFetch: () => ({
+      label: "WebFetch",
+      preview: toSingleLineText(input.url)
+    }),
+    Write: () => ({
+      label: "Write",
+      preview: truncateTextStart(input.file_path, config.toolSummaryInputPreviewMaxLength)
+    }),
     Bash: () => ({
       label: "Bash",
       preview: truncateTextEnd(input.command, config.toolSummaryInputPreviewMaxLength)
@@ -340,9 +356,21 @@ export function resolveToolNavLabel(toolName, toolInput, fallbackLabel) {
       const patternValue = String(input.pattern || "").trim();
       return patternValue ? `${toolName}: ${patternValue}` : String(toolName || safeFallback).trim();
     },
+    WebSearch: () => {
+      const queryValue = String(input.query || "").trim();
+      return queryValue ? `${toolName}: ${queryValue}` : String(toolName || safeFallback).trim();
+    },
+    WebFetch: () => {
+      const urlValue = String(input.url || "").trim();
+      return urlValue ? `${toolName}: ${urlValue}` : String(toolName || safeFallback).trim();
+    },
     Write: () => {
       const filePathValue = String(input.file_path || "").trim();
       return filePathValue ? `Write: ${filePathValue}` : String(toolName || safeFallback).trim();
+    },
+    Edit: () => {
+      const filePathValue = String(input.file_path || "").trim();
+      return filePathValue ? `Edit: ${filePathValue}` : String(toolName || safeFallback).trim();
     },
     Read: () => {
       const filePathValue = String(input.file_path || "").trim();
