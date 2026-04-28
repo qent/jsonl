@@ -854,6 +854,18 @@
       color: var(--markdown-text);
     }
 
+    .txt-block {
+      min-width: 0;
+    }
+
+    .txt-plain {
+      color: var(--markdown-text);
+      font-size: 13px;
+      line-height: 1.62;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
     zero-md.txt a {
       color: var(--markdown-link);
     }
@@ -876,15 +888,21 @@
       display: flex;
       align-items: center;
       gap: 0.35rem;
+      min-width: 0;
     }
 
     .summary-with-copy {
       padding-right: 0.18rem;
+      align-items: flex-start;
     }
 
     .summary-preview {
       color: var(--summary-preview-text);
       font-weight: 520;
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow-wrap: anywhere;
+      white-space: normal;
     }
 
     .summary-preview-error {
@@ -938,6 +956,21 @@
     .meta-copy-btn {
       margin-left: auto;
       transform: translateX(-2px);
+    }
+
+    .meta-markdown-btn {
+      margin-left: auto;
+      transform: translateX(-2px);
+    }
+
+    .meta-markdown-btn + .meta-copy-btn {
+      margin-left: 0;
+    }
+
+    .meta-markdown-btn.active {
+      color: var(--accent);
+      opacity: 1;
+      background: var(--accent-ring);
     }
 
     summary::-webkit-details-marker {

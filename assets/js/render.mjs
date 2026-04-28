@@ -132,6 +132,61 @@ export function createRenderer(options) {
     return copyButton;
   }
 
+  function hasTextParts(entry) {
+    return (entry.parts || []).some((part) => part && part.kind === "text");
+  }
+
+  function collectTextRenderBlocks(node, textRenderBlocks = []) {
+    if (!node || !node.children || node.children.length === 0) {
+      return textRenderBlocks;
+    }
+
+    for (const child of node.children) {
+      if (!child) {
+        continue;
+      }
+      if (child.classList && child.classList.contains("txt-block")) {
+        textRenderBlocks.push(child);
+        continue;
+      }
+      collectTextRenderBlocks(child, textRenderBlocks);
+    }
+
+    return textRenderBlocks;
+  }
+
+  function createMarkdownToggleButton(card) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "panel-copy-btn meta-markdown-btn";
+    button.title = "Render markdown";
+    button.setAttribute("aria-label", "Render markdown");
+    button.setAttribute("aria-pressed", "false");
+
+    const icon = document.createElement("span");
+    icon.className = "panel-copy-icon";
+    icon.textContent = "markdown";
+    icon.setAttribute("aria-hidden", "true");
+    button.appendChild(icon);
+
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const nextMarkdownState = button.getAttribute("aria-pressed") !== "true";
+      setCardMarkdownState(card, nextMarkdownState);
+      button.setAttribute("aria-pressed", String(nextMarkdownState));
+      button.title = nextMarkdownState ? "Render plain text" : "Render markdown";
+      button.setAttribute("aria-label", nextMarkdownState ? "Render plain text" : "Render markdown");
+      if (nextMarkdownState) {
+        button.classList.add("active");
+      } else {
+        button.classList.remove("active");
+      }
+    });
+
+    return button;
+  }
+
   function createPanel(label, code, panelOptions = {}) {
     const details = document.createElement("details");
     const summary = document.createElement("summary");
@@ -162,7 +217,7 @@ export function createRenderer(options) {
     return details;
   }
 
-  function createMetaRow(entry) {
+  function createMetaRow(entry, card = null) {
     const meta = document.createElement("div");
     meta.className = "m";
 
@@ -185,6 +240,10 @@ export function createRenderer(options) {
 
     meta.appendChild(time);
 
+    if (card && hasTextParts(entry)) {
+      meta.appendChild(createMarkdownToggleButton(card));
+    }
+
     if (entry.copy_in_meta && entry.copy_text && !entry.error) {
       const copyLabel = entry.type === "system" ? "Copy system message" : "Copy message";
       meta.appendChild(createCopyButton(entry.copy_text, copyLabel, "meta-copy-btn"));
@@ -198,6 +257,13 @@ export function createRenderer(options) {
     }
 
     return meta;
+  }
+
+  function createPlainTextBlock(text) {
+    const plain = document.createElement("div");
+    plain.className = "txt txt-plain";
+    plain.textContent = text;
+    return plain;
   }
 
   function createMarkdownBlock(markdownText) {
@@ -232,6 +298,42 @@ export function createRenderer(options) {
     markdown.appendChild(script);
 
     return markdown;
+  }
+
+  function setTextBlockMarkdownState(textBlock, isMarkdownEnabled) {
+    if (!textBlock) {
+      return;
+    }
+
+    const plainText = String(textBlock._plainText || "");
+    const markdownText = String(textBlock._markdownText || plainText);
+    textBlock.textContent = "";
+    textBlock.className = isMarkdownEnabled
+      ? "txt-block markdown-enabled"
+      : "txt-block";
+    textBlock.appendChild(isMarkdownEnabled
+      ? createMarkdownBlock(markdownText)
+      : createPlainTextBlock(plainText));
+  }
+
+  function setCardMarkdownState(card, isMarkdownEnabled) {
+    const textBlocks = collectTextRenderBlocks(card, []);
+    for (const textBlock of textBlocks) {
+      setTextBlockMarkdownState(textBlock, isMarkdownEnabled);
+    }
+  }
+
+  function createTextRenderBlock(part) {
+    const block = document.createElement("div");
+    block.className = "txt-block";
+    block._plainText = String(
+      Object.prototype.hasOwnProperty.call(part, "raw_text")
+        ? part.raw_text
+        : part.text || ""
+    );
+    block._markdownText = String(part.text || block._plainText);
+    setTextBlockMarkdownState(block, false);
+    return block;
   }
 
   function createResultStatsBlock(statsItem) {
@@ -326,7 +428,7 @@ export function createRenderer(options) {
   function appendRegularEntryParts(card, entry) {
     for (const part of entry.parts || []) {
       if (part.kind === "text") {
-        card.appendChild(createMarkdownBlock(part.text || ""));
+        card.appendChild(createTextRenderBlock(part));
         continue;
       }
 
@@ -490,7 +592,7 @@ export function createRenderer(options) {
   }
 
   function appendEntryCardBody(card, entry) {
-    card.appendChild(createMetaRow(entry));
+    card.appendChild(createMetaRow(entry, card));
 
     if (entry.type === "tool") {
       appendToolEntry(card, entry);

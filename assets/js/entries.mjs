@@ -208,6 +208,31 @@ export function serializeToolResultContent(toolResultContent) {
 export function resolveToolRequestSummary(toolName, toolInput, config = DEFAULT_CONFIG) {
   const normalizedToolName = toSingleLineText(toolName) || "tool";
   const input = toolInput && typeof toolInput === "object" ? toolInput : {};
+  const createAskUserQuestionPreview = () => {
+    const questions = Array.isArray(input.questions) ? input.questions : [];
+    const firstQuestion = questions[0] && typeof questions[0] === "object" ? questions[0] : {};
+    const questionText = toSingleLineText(firstQuestion.question);
+    const options = Array.isArray(firstQuestion.options) ? firstQuestion.options : [];
+    const optionTexts = [];
+
+    for (const option of options) {
+      if (!option || typeof option !== "object") {
+        continue;
+      }
+
+      const label = toSingleLineText(option.label);
+      const description = toSingleLineText(option.description);
+      if (label && description) {
+        optionTexts.push(`${label}: ${description}`);
+        continue;
+      }
+      if (label || description) {
+        optionTexts.push(label || description);
+      }
+    }
+
+    return [questionText, ...optionTexts].filter(Boolean).join(" ");
+  };
 
   const resolvers = {
     Skill: () => ({
@@ -225,6 +250,14 @@ export function resolveToolRequestSummary(toolName, toolInput, config = DEFAULT_
     Bash: () => ({
       label: "Bash",
       preview: truncateTextEnd(input.command, config.toolSummaryInputPreviewMaxLength)
+    }),
+    Edit: () => ({
+      label: "Edit",
+      preview: truncateTextStart(input.file_path, config.toolSummaryInputPreviewMaxLength)
+    }),
+    AskUserQuestion: () => ({
+      label: "AskUserQuestion",
+      preview: createAskUserQuestionPreview()
     })
   };
 
@@ -419,8 +452,6 @@ function createTextEntry(objectItem, textParts, options) {
 function createThinkingEntry(contentItem, itemTimestamp, createAnchorId) {
   const rawThinking = String(contentItem.thinking || "");
   const thinkingLabel = toSingleLineText(rawThinking);
-  const parts = [createTextPart(rawThinking)];
-  parts.push(createRawPart("thinking raw", contentItem));
 
   return {
     type: "thinking",
@@ -428,9 +459,7 @@ function createThinkingEntry(contentItem, itemTimestamp, createAnchorId) {
     time: itemTimestamp,
     anchor_id: createAnchorId(),
     nav_label: thinkingLabel ? `thinking: ${thinkingLabel}` : "thinking",
-    copy_text: rawThinking,
-    copy_in_meta: Boolean(rawThinking),
-    parts
+    parts: []
   };
 }
 
@@ -634,6 +663,10 @@ function createNonContentEntry(objectItem, options) {
   if (itemType === "progress") {
     const data = objectItem.data && typeof objectItem.data === "object" ? objectItem.data : {};
     const progressType = toSingleLineText(data.type) || "progress";
+    if (progressType === "hook_progress" && toSingleLineText(data.hookEvent) === "PostToolUse") {
+      return null;
+    }
+
     const progressPreview = previewFromValue(
       data.output || data.query || data.prompt || data.message || [data.serverName, data.toolName, data.status].filter(Boolean).join(" ")
     );
@@ -663,11 +696,15 @@ function createNonContentEntry(objectItem, options) {
     const operation = toSingleLineText(objectItem.operation) || "queue";
     const contentText = typeof objectItem.content === "string" ? objectItem.content : "";
     const contentPreview = previewFromValue(contentText);
-    appendTextAndRawParts(parts, contentText, `queue ${operation}`, rawPayload);
+    if (contentText.trim()) {
+      parts.push(createTextPart(contentText));
+    }
     return {
       ...baseEntry,
       type: "queue-operation",
-      nav_label: contentPreview ? `queue ${operation}: ${contentPreview}` : `queue ${operation}`
+      nav_label: contentPreview ? `queue ${operation}: ${contentPreview}` : `queue ${operation}`,
+      copy_text: contentText,
+      copy_in_meta: Boolean(contentText)
     };
   }
 
@@ -842,13 +879,16 @@ export function buildEntries(objects, toolUses = {}, options = {}) {
     }
 
     if (!Array.isArray(content)) {
-      entries.push(createNonContentEntry(objectItem, {
+      const nonContentEntry = createNonContentEntry(objectItem, {
         itemType,
         itemTimestamp,
         message,
         hasMessageObject,
         createAnchorId
-      }));
+      });
+      if (nonContentEntry) {
+        entries.push(nonContentEntry);
+      }
       continue;
     }
 

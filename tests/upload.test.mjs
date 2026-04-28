@@ -6,6 +6,7 @@ import { createJsonlViewerApp } from '../assets/js/app.mjs';
 import {
   normalizeTodoItems,
   parseJsonLines,
+  resolveToolRequestSummary,
   resolveToolNavLabel
 } from '../assets/js/entries.mjs';
 import { createMemoryEntryRecords } from '../assets/js/records.mjs';
@@ -426,6 +427,31 @@ test('pure tool helpers normalize todo items and navigation labels', () => {
   assert.equal(resolveToolNavLabel('Read', { file_path: '/tmp/in.jsonl' }, 'tool'), 'Read: /tmp/in.jsonl');
   assert.equal(resolveToolNavLabel('Grep', { pattern: 'TODO' }, 'tool'), 'Grep: TODO');
   assert.equal(resolveToolNavLabel('Skill', { skill: 'Plan markdown' }, 'tool'), '/Plan markdown');
+});
+
+test('pure tool request summaries preview Edit paths and AskUserQuestion choices', () => {
+  const editSummary = resolveToolRequestSummary('Edit', { file_path: '/tmp/source/file.mjs' });
+  const askSummary = resolveToolRequestSummary('AskUserQuestion', {
+    questions: [
+      {
+        question: 'Which import path should be used?',
+        options: [
+          { label: 'Re-export', description: 'Keep thin modules in build/yandex/ai.' },
+          { label: 'Move data', description: 'Move only file_info and README.' }
+        ]
+      }
+    ]
+  });
+
+  assert.deepEqual(editSummary, {
+    label: 'Edit',
+    preview: '/tmp/source/file.mjs'
+  });
+  assert.equal(askSummary.label, 'AskUserQuestion');
+  assert.equal(
+    askSummary.preview,
+    'Which import path should be used? Re-export: Keep thin modules in build/yandex/ai. Move data: Move only file_info and README.'
+  );
 });
 
 test('pure record helpers preserve anchors and truncate large nav summaries', () => {
@@ -997,13 +1023,41 @@ test('raw Claude Code message variants render string content, thinking, array to
   assert.equal(cards.length, 5);
   assert.equal(cards[0].classList.contains('user'), true);
   assert.equal(cards[1].classList.contains('system'), true);
+  assert.equal(cards[1].children.length, 1);
+  assert.equal(cards[1].children[0].children[0].textContent, 'thinking');
   assert.equal(cards[2].classList.contains('agent'), true);
   assert.equal(cards[3].children[1].tagName, 'DETAILS');
   assert.equal(cards[4].classList.contains('tool'), true);
   assert.equal(cards[4].children[2].children[1].textContent, 'array result text');
 });
 
-test('top-level Claude Code service events render visible cards without losing raw payloads', async () => {
+test('thinking entries render only metadata and do not enable history expand controls', async () => {
+  const api = createHarness();
+  const jsonlObjects = [
+    {
+      type: 'assistant',
+      timestamp: '2026-04-24T12:30:01Z',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'thinking', thinking: 'private reasoning', signature: 'sig' }]
+      }
+    }
+  ];
+  const jsonl = jsonlObjects.map((objectItem) => JSON.stringify(objectItem)).join('\n');
+
+  await api.handleFiles([createFile('thinking-only.jsonl', jsonl)]);
+
+  const cards = getRenderedCards(api);
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].children.length, 1);
+  assert.equal(cards[0].children[0].children.length, 2);
+  assert.equal(cards[0].children[0].children[0].textContent, 'thinking');
+  assert.equal(cards[0].children[0].children[1].textContent, '12:30:01');
+  assert.equal(api.collapseAllBtn.hidden, true);
+  assert.equal(api.expandAllBtn.hidden, true);
+});
+
+test('top-level Claude Code service events render visible cards and filter hook progress noise', async () => {
   const api = createHarness();
   const jsonlObjects = [
     {
@@ -1022,6 +1076,15 @@ test('top-level Claude Code service events render visible cards without losing r
         fullOutput: 'line one\nline two',
         elapsedTimeSeconds: 1,
         totalLines: 2
+      }
+    },
+    {
+      type: 'progress',
+      timestamp: '2026-04-24T12:31:01Z',
+      data: {
+        type: 'hook_progress',
+        hookEvent: 'PostToolUse',
+        message: 'suppressed hook progress'
       }
     },
     {
@@ -1097,6 +1160,18 @@ test('top-level Claude Code service events render visible cards without losing r
   assert.equal(cards[0].children[1].tagName, 'DETAILS');
   assert.equal(cards[1].children[1].children[1].textContent.includes('"bash_progress"'), true);
   assert.equal(cards[2].children[1].children[1].textContent.includes('"displayPath": "index.html"'), true);
+  assert.equal(cards[3].children.length, 2);
+  assert.equal(cards[3].children[1].classList.contains('txt-block'), true);
+  assert.equal(cards[3].children[1].children[0].classList.contains('txt-plain'), true);
+  assert.equal(cards[3].children[1].children[0].textContent, 'queued command body');
+  const queueMarkdownButton = findChildByClass(cards[3].children[0], 'meta-markdown-btn');
+  const queueCopyButton = findChildByClass(cards[3].children[0], 'meta-copy-btn');
+  assert.ok(queueMarkdownButton, 'queue-operation markdown button should be present');
+  assert.ok(queueCopyButton, 'queue-operation copy button should be present');
+  assert.equal(cards[3].children[0].children.indexOf(queueMarkdownButton) < cards[3].children[0].children.indexOf(queueCopyButton), true);
+  queueCopyButton.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(api.clipboardWrites, ['queued command body']);
   assert.equal(cards[9].children[1].children[1].textContent.includes('"future-event"'), true);
 });
 
@@ -1375,6 +1450,14 @@ test('tool panel summaries render contextual previews and truncation rules', asy
   const longBashCommand = `printf "start" && ${'echo very-long-command-part '.repeat(5)}done`;
   const longSuccessResult = `success output ${'x'.repeat(120)}`;
   const longErrorResult = `line one\n${'error-token '.repeat(20)}`;
+  const editPath = '/tmp/edit-target.jsonl';
+  const askQuestion = 'Как должен выглядеть импорт после переноса?';
+  const askPreview = [
+    askQuestion,
+    'Оставить re-export: Оставить в build/yandex/ai/ тонкие модули-реэкспорты.',
+    'Только данные: Перенести только file_info + README.',
+    'Полный перенос: Создать __init__.py и добавить tools/ в PYTHONPATH.'
+  ].join(' ');
   const jsonlObjects = [
     {
       type: 'assistant',
@@ -1445,6 +1528,62 @@ test('tool panel summaries render contextual previews and truncation rules', asy
       message: {
         content: [{ type: 'tool_result', tool_use_id: 'tool-summary-5', content: longErrorResult, is_error: true }]
       }
+    },
+    {
+      type: 'assistant',
+      timestamp: '2026-04-24T12:20:10Z',
+      message: {
+        content: [{ type: 'tool_use', id: 'tool-summary-6', name: 'Edit', input: { file_path: editPath, old_string: 'old', new_string: 'new' } }]
+      }
+    },
+    {
+      type: 'user',
+      timestamp: '2026-04-24T12:20:11Z',
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: 'tool-summary-6', content: 'edit ok' }]
+      }
+    },
+    {
+      type: 'assistant',
+      timestamp: '2026-04-24T12:20:12Z',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'tool-summary-7',
+            name: 'AskUserQuestion',
+            input: {
+              questions: [
+                {
+                  question: askQuestion,
+                  options: [
+                    {
+                      label: 'Оставить re-export',
+                      description: 'Оставить в build/yandex/ai/ тонкие модули-реэкспорты.'
+                    },
+                    {
+                      label: 'Только данные',
+                      description: 'Перенести только file_info + README.'
+                    },
+                    {
+                      label: 'Полный перенос',
+                      description: 'Создать __init__.py и добавить tools/ в PYTHONPATH.'
+                    }
+                  ],
+                  multiSelect: false
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      type: 'user',
+      timestamp: '2026-04-24T12:20:13Z',
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: 'tool-summary-7', content: 'answered' }]
+      }
     }
   ];
   const jsonl = jsonlObjects.map((objectItem) => JSON.stringify(objectItem)).join('\n');
@@ -1463,7 +1602,7 @@ test('tool panel summaries render contextual previews and truncation rules', asy
   const fileSection = api.outputEl.children[0];
   const feed = fileSection.children[1];
   const cards = feed.children;
-  assert.equal(cards.length, 5);
+  assert.equal(cards.length, 7);
 
   const skillRequestSummary = cards[0].children[1].children[0];
   const readRequestSummary = cards[1].children[1].children[0];
@@ -1471,6 +1610,8 @@ test('tool panel summaries render contextual previews and truncation rules', asy
   const bashRequestSummary = cards[3].children[1].children[0];
   const bashResultSummary = cards[3].children[2].children[0];
   const writeErrorResultSummary = cards[4].children[2].children[0];
+  const editRequestSummary = cards[5].children[1].children[0];
+  const askRequestSummary = cards[6].children[1].children[0];
 
   const skillPreview = findChildByClass(skillRequestSummary, 'summary-preview');
   const readPreview = findChildByClass(readRequestSummary, 'summary-preview');
@@ -1478,6 +1619,8 @@ test('tool panel summaries render contextual previews and truncation rules', asy
   const bashPreview = findChildByClass(bashRequestSummary, 'summary-preview');
   const bashResultPreview = findChildByClass(bashResultSummary, 'summary-preview');
   const writeErrorPreview = findChildByClass(writeErrorResultSummary, 'summary-preview');
+  const editPreview = findChildByClass(editRequestSummary, 'summary-preview');
+  const askPreviewElement = findChildByClass(askRequestSummary, 'summary-preview');
 
   assert.equal(skillRequestSummary.textContent, 'Skill');
   assert.equal(readRequestSummary.textContent, 'Read');
@@ -1485,6 +1628,8 @@ test('tool panel summaries render contextual previews and truncation rules', asy
   assert.equal(bashRequestSummary.textContent, 'Bash');
   assert.equal(bashResultSummary.textContent, '');
   assert.equal(writeErrorResultSummary.textContent, '');
+  assert.equal(editRequestSummary.textContent, 'Edit');
+  assert.equal(askRequestSummary.textContent, 'AskUserQuestion');
 
   assert.ok(skillPreview, 'Skill preview should be present');
   assert.ok(readPreview, 'Read preview should be present');
@@ -1492,6 +1637,8 @@ test('tool panel summaries render contextual previews and truncation rules', asy
   assert.ok(bashPreview, 'Bash preview should be present');
   assert.ok(bashResultPreview, 'successful result preview should be present');
   assert.ok(writeErrorPreview, 'error result preview should be present');
+  assert.ok(editPreview, 'Edit file path preview should be present');
+  assert.ok(askPreviewElement, 'AskUserQuestion preview should be present');
 
   assert.equal(skillPreview.textContent, ' /Plan markdown');
   assert.equal(readPreview.textContent, ` ${truncateStart(longReadPath, 90)}`);
@@ -1499,6 +1646,8 @@ test('tool panel summaries render contextual previews and truncation rules', asy
   assert.equal(bashPreview.textContent, ` ${truncateEnd(longBashCommand, 90)}`);
   assert.equal(bashResultPreview.textContent, truncateEnd(longSuccessResult, 110));
   assert.equal(writeErrorPreview.textContent, truncateEnd(longErrorResult, 110));
+  assert.equal(editPreview.textContent, ` ${editPath}`);
+  assert.equal(askPreviewElement.textContent, ` ${askPreview}`);
   assert.equal(writeErrorPreview.classList.contains('summary-preview-error'), true);
   assert.equal(bashResultPreview.classList.contains('summary-preview-error'), false);
 });
@@ -1651,11 +1800,19 @@ test('text message headers expose copy icons and copy content', async () => {
   const feed = fileSection.children[1];
   const cards = feed.children;
 
-  const systemMetaCopyButton = cards[0].children[0].children[2];
-  const userMetaCopyButton = cards[1].children[0].children[2];
+  const systemMetaMarkdownButton = findChildByClass(cards[0].children[0], 'meta-markdown-btn');
+  const userMetaMarkdownButton = findChildByClass(cards[1].children[0], 'meta-markdown-btn');
+  const systemMetaCopyButton = findChildByClass(cards[0].children[0], 'meta-copy-btn');
+  const userMetaCopyButton = findChildByClass(cards[1].children[0], 'meta-copy-btn');
 
+  assert.ok(systemMetaMarkdownButton, 'system markdown button should be present');
+  assert.ok(userMetaMarkdownButton, 'user markdown button should be present');
   assert.equal(systemMetaCopyButton.classList.contains('meta-copy-btn'), true);
   assert.equal(userMetaCopyButton.classList.contains('meta-copy-btn'), true);
+  assert.equal(cards[0].children[0].children.indexOf(systemMetaMarkdownButton) < cards[0].children[0].children.indexOf(systemMetaCopyButton), true);
+  assert.equal(cards[1].children[0].children.indexOf(userMetaMarkdownButton) < cards[1].children[0].children.indexOf(userMetaCopyButton), true);
+  assert.equal(systemMetaMarkdownButton.attributes['aria-pressed'], 'false');
+  assert.equal(userMetaMarkdownButton.attributes['aria-pressed'], 'false');
   assert.equal(systemMetaCopyButton.attributes['aria-label'], 'Copy system message');
   assert.equal(userMetaCopyButton.attributes['aria-label'], 'Copy message');
 
@@ -1668,6 +1825,51 @@ test('text message headers expose copy icons and copy content', async () => {
   assert.deepEqual(api.clipboardWrites, ['user message body', 'system block body']);
   assert.equal(copyToast.textContent, 'Copied');
   assert.equal(copyToast.classList.contains('visible'), true);
+});
+
+test('text content renders as plain text until markdown toggle is clicked', async () => {
+  const api = createHarness();
+  const markdownText = '# Heading\n\n**bold** & <tag>';
+  const jsonlObjects = [
+    {
+      type: 'assistant',
+      timestamp: '2026-04-24T12:11:02Z',
+      message: {
+        content: [{ type: 'text', text: markdownText }]
+      }
+    }
+  ];
+  const jsonl = jsonlObjects.map((objectItem) => JSON.stringify(objectItem)).join('\n');
+
+  await api.handleFiles([createFile('markdown-toggle.jsonl', jsonl)]);
+
+  const card = getRenderedCards(api)[0];
+  const meta = card.children[0];
+  const markdownButton = findChildByClass(meta, 'meta-markdown-btn');
+  const copyButton = findChildByClass(meta, 'meta-copy-btn');
+  const textBlock = card.children[1];
+
+  assert.ok(markdownButton, 'markdown button should be present');
+  assert.ok(copyButton, 'copy button should be present');
+  assert.equal(meta.children.indexOf(markdownButton) < meta.children.indexOf(copyButton), true);
+  assert.equal(textBlock.classList.contains('txt-block'), true);
+  assert.equal(textBlock.children[0].classList.contains('txt-plain'), true);
+  assert.equal(textBlock.children[0].textContent, markdownText);
+
+  markdownButton.click();
+
+  assert.equal(markdownButton.attributes['aria-pressed'], 'true');
+  assert.equal(markdownButton.classList.contains('active'), true);
+  assert.equal(textBlock.classList.contains('markdown-enabled'), true);
+  assert.equal(textBlock.children[0].tagName, 'ZERO-MD');
+
+  markdownButton.click();
+
+  assert.equal(markdownButton.attributes['aria-pressed'], 'false');
+  assert.equal(markdownButton.classList.contains('active'), false);
+  assert.equal(textBlock.classList.contains('markdown-enabled'), false);
+  assert.equal(textBlock.children[0].classList.contains('txt-plain'), true);
+  assert.equal(textBlock.children[0].textContent, markdownText);
 });
 
 test('system raw details summary includes copy icon and copies raw payload', async () => {
