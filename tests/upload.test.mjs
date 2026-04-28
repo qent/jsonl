@@ -1097,6 +1097,7 @@ test('navigation focus pip stays visually attached to the navigation column', ()
   const layoutGridBlockMatch = stylesCss.match(/\.layout-grid\s*\{([\s\S]*?)\n\s*\}/);
   const hasNavLayoutGridBlockMatch = stylesCss.match(/\.app\.has-nav \.layout-grid\s*\{([\s\S]*?)\n\s*\}/);
   const hasNavMainColumnBlockMatch = stylesCss.match(/\.app\.has-nav \.main-column\s*\{([\s\S]*?)\n\s*\}/);
+  const navFocusMainColumnBlockMatch = stylesCss.match(/\.app\.nav-focus-active \.main-column\s*\{([\s\S]*?)\n\s*\}/);
   const appBlockMatch = stylesCss.match(/\.app\s*\{([\s\S]*?)\n\s*\}/);
   const pipBlockMatch = stylesCss.match(/\.nav-focus-pip\s*\{([\s\S]*?)\n\s*\}/);
   const pipActiveBlockMatch = stylesCss.match(/\.app\.nav-focus-active \.nav-focus-pip\s*\{([\s\S]*?)\n\s*\}/);
@@ -1106,6 +1107,7 @@ test('navigation focus pip stays visually attached to the navigation column', ()
   assert.ok(layoutGridBlockMatch, 'layout grid block not found');
   assert.ok(hasNavLayoutGridBlockMatch, 'app has-nav layout-grid block not found');
   assert.ok(hasNavMainColumnBlockMatch, 'app has-nav main-column block not found');
+  assert.ok(navFocusMainColumnBlockMatch, 'app nav-focus-active main-column block not found');
   assert.ok(appBlockMatch, 'app block not found');
   assert.ok(pipBlockMatch, 'nav focus pip block not found');
   assert.ok(pipActiveBlockMatch, 'active nav focus pip block not found');
@@ -1115,6 +1117,7 @@ test('navigation focus pip stays visually attached to the navigation column', ()
   const layoutGridBlock = layoutGridBlockMatch[1];
   const hasNavLayoutGridBlock = hasNavLayoutGridBlockMatch[1];
   const hasNavMainColumnBlock = hasNavMainColumnBlockMatch[1];
+  const navFocusMainColumnBlock = navFocusMainColumnBlockMatch[1];
   const appBlock = appBlockMatch[1];
   const pipBlock = pipBlockMatch[1];
   const pipActiveBlock = pipActiveBlockMatch[1];
@@ -1124,6 +1127,7 @@ test('navigation focus pip stays visually attached to the navigation column', ()
   assert.match(layoutGridBlock, /justify-content:\s*center;/);
   assert.match(hasNavLayoutGridBlock, /justify-content:\s*flex-end;/);
   assert.match(hasNavMainColumnBlock, /margin-left:\s*0;/);
+  assert.match(navFocusMainColumnBlock, /margin-right:\s*var\(--nav-width\);/);
   assert.match(appBlock, /padding:\s*0 0 0 var\(--page-inline-gap\);/);
   assert.match(stylesCss, /@media \(min-width:\s*1121px\)\s*\{[\s\S]*?\.app\.has-nav \.clear-btn\s*\{[\s\S]*?right:\s*calc\(var\(--nav-width\) \+ var\(--column-inline-gap\) \+ var\(--scrollbar-safe-gap\)\);/);
   assert.match(pipBlock, /right:\s*calc\(var\(--nav-width\) - 1px\);/);

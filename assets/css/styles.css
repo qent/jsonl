@@ -220,6 +220,7 @@
     }
 
     .app.nav-focus-active .main-column {
+      margin-right: var(--nav-width);
       filter: blur(4px);
       opacity: 0.58;
       pointer-events: none;
