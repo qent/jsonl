@@ -10,6 +10,9 @@ const SCRIPT_CLOSING_TAG = "<" + "/script>";
  * @property {string} [json]
  * @property {Record<string, unknown>} [input]
  * @property {unknown} [line_ref]
+ * @property {string} [context_badge]
+ * @property {string} [context_title]
+ * @property {string} [nav_context_label]
  */
 
 /**
@@ -20,6 +23,9 @@ const SCRIPT_CLOSING_TAG = "<" + "/script>";
  * @property {string} [anchor_id]
  * @property {string} [nav_label]
  * @property {string} [nav_label_variant]
+ * @property {string} [context_badge]
+ * @property {string} [context_title]
+ * @property {string} [nav_context_label]
  * @property {boolean} [error]
  * @property {Array<Record<string, unknown>>} [parts]
  */
@@ -157,6 +163,10 @@ export function toSingleLineText(value) {
   }
 
   return String(value).replace(/\s+/g, " ").trim();
+}
+
+function isRecord(value) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 export function truncateTextEnd(value, maxLength) {
@@ -435,6 +445,29 @@ function createRawPart(label, value) {
   };
 }
 
+function applyEntryContext(entry, options = {}) {
+  if (!entry) {
+    return entry;
+  }
+
+  const contextBadge = toSingleLineText(options.contextBadge);
+  if (contextBadge) {
+    entry.context_badge = contextBadge;
+  }
+
+  const contextTitle = toSingleLineText(options.contextTitle);
+  if (contextTitle) {
+    entry.context_title = contextTitle;
+  }
+
+  const navContextLabel = toSingleLineText(options.navContextLabel);
+  if (navContextLabel) {
+    entry.nav_context_label = navContextLabel;
+  }
+
+  return entry;
+}
+
 function normalizeMessageType(itemType) {
   return itemType === "assistant" ? "agent" : itemType || "entry";
 }
@@ -477,7 +510,7 @@ function createTextEntry(objectItem, textParts, options) {
     ? subtypeLabel || joinTextPartsSingleLine(textParts) || getTypeLabel(normalizedType)
     : joinTextPartsSingleLine(textParts) || getTypeLabel(normalizedType);
 
-  return {
+  return applyEntryContext({
     type: normalizedType,
     cls: normalizeMessageClass(itemType),
     time: itemTimestamp,
@@ -486,21 +519,25 @@ function createTextEntry(objectItem, textParts, options) {
     copy_text: textCopyPayload,
     copy_in_meta: true,
     parts: textParts
-  };
+  }, options);
 }
 
-function createThinkingEntry(contentItem, itemTimestamp, createAnchorId) {
+function createThinkingEntry(contentItem, options) {
+  const {
+    itemTimestamp,
+    createAnchorId
+  } = options;
   const rawThinking = String(contentItem.thinking || "");
   const thinkingLabel = toSingleLineText(rawThinking);
 
-  return {
+  return applyEntryContext({
     type: "thinking",
     cls: "system",
     time: itemTimestamp,
     anchor_id: createAnchorId(),
     nav_label: thinkingLabel ? `thinking: ${thinkingLabel}` : "thinking",
     parts: []
-  };
+  }, options);
 }
 
 function createUnknownContentEntry(objectItem, contentItem, options) {
@@ -515,14 +552,14 @@ function createUnknownContentEntry(objectItem, contentItem, options) {
   const subtypeLabel = getMessageSubtype(objectItem, message);
   const navPrefix = subtypeLabel || getTypeLabel(normalizedType);
 
-  return {
+  return applyEntryContext({
     type: normalizedType,
     cls: normalizeMessageClass(itemType),
     time: itemTimestamp,
     anchor_id: createAnchorId(),
     nav_label: `${navPrefix}: ${blockType}`,
     parts: [createRawPart(blockType, contentItem)]
-  };
+  }, options);
 }
 
 function serializeContentBlockText(contentBlocks) {
@@ -590,8 +627,13 @@ function createToolResultEntry(toolResultItem, toolUse, options) {
   const toolNavLabel = isToolError
     ? toolErrorNavLabel
     : bashSuccessNavLabel || defaultToolNavLabel;
+  const contextOptions = {
+    contextBadge: options.contextBadge || toolUse.context_badge,
+    contextTitle: options.contextTitle || toolUse.context_title,
+    navContextLabel: options.navContextLabel || toolUse.nav_context_label
+  };
 
-  return {
+  return applyEntryContext({
     type: "tool",
     cls: "tool",
     time: toolUse.time || itemTimestamp,
@@ -612,7 +654,7 @@ function createToolResultEntry(toolResultItem, toolUse, options) {
     result_summary_label: resultSummary.label,
     result_summary_preview: resultSummary.preview,
     result_summary_variant: resultSummary.variant
-  };
+  }, contextOptions);
 }
 
 export function createToolRequestEntry(toolUseId, toolUse = {}, options = {}) {
@@ -623,7 +665,7 @@ export function createToolRequestEntry(toolUseId, toolUse = {}, options = {}) {
   const isTodoWriteEntry = (toolUse.name || "") === "TodoWrite" && normalizedTodos.length > 0;
   const requestSummary = resolveToolRequestSummary(toolName, toolInput, config);
 
-  return {
+  return applyEntryContext({
     type: "tool",
     cls: "tool",
     time: toolUse.time || "",
@@ -645,7 +687,11 @@ export function createToolRequestEntry(toolUseId, toolUse = {}, options = {}) {
     result_summary_label: "",
     result_summary_preview: "",
     result_summary_variant: "default"
-  };
+  }, {
+    contextBadge: toolUse.context_badge,
+    contextTitle: toolUse.context_title,
+    navContextLabel: toolUse.nav_context_label
+  });
 }
 
 function previewFromValue(value, maxLength = 120) {
@@ -655,6 +701,51 @@ function previewFromValue(value, maxLength = 120) {
   }
 
   return truncateTextEnd(preview, maxLength);
+}
+
+function formatShortAgentId(agentId) {
+  const normalizedAgentId = toSingleLineText(agentId);
+  if (!normalizedAgentId) {
+    return "";
+  }
+
+  return normalizedAgentId.length > 10
+    ? normalizedAgentId.slice(0, 10)
+    : normalizedAgentId;
+}
+
+function getAgentProgressData(objectItem) {
+  if (!objectItem || objectItem.type !== "progress" || !isRecord(objectItem.data)) {
+    return null;
+  }
+
+  return objectItem.data.type === "agent_progress" ? objectItem.data : null;
+}
+
+function getAgentProgressMessageObject(objectItem) {
+  const data = getAgentProgressData(objectItem);
+  if (!data || !isRecord(data.message)) {
+    return null;
+  }
+
+  return data.message;
+}
+
+function resolveAgentProgressContext(objectItem, toolUses = {}) {
+  const data = getAgentProgressData(objectItem) || {};
+  const parentToolUseId = toSingleLineText(objectItem && objectItem.parentToolUseID);
+  const parentToolUse = parentToolUseId ? toolUses[parentToolUseId] : null;
+  const parentInput = parentToolUse && isRecord(parentToolUse.input) ? parentToolUse.input : {};
+  const parentDescription = parentToolUse && parentToolUse.name === "Agent"
+    ? toSingleLineText(parentInput.description)
+    : "";
+  const shortAgentId = formatShortAgentId(data.agentId);
+
+  return {
+    contextBadge: "Subagent",
+    contextTitle: parentDescription || shortAgentId || "Agent",
+    navContextLabel: "Agent"
+  };
 }
 
 function appendTextAndRawParts(parts, text, rawLabel, rawPayload) {
@@ -675,14 +766,14 @@ function createNonContentEntry(objectItem, options) {
   } = options;
   const rawPayload = hasMessageObject ? message : objectItem;
   const parts = [];
-  const baseEntry = {
+  const baseEntry = applyEntryContext({
     type: itemType || "entry",
     cls: "system",
     time: itemTimestamp,
     anchor_id: createAnchorId(),
     nav_label: getTypeLabel(itemType),
     parts
-  };
+  }, options);
 
   if (itemType === "system") {
     const subtypeLabel = getMessageSubtype(objectItem, message) || "system";
@@ -707,8 +798,9 @@ function createNonContentEntry(objectItem, options) {
       return null;
     }
 
+    const messagePreview = isRecord(data.message) ? "" : data.message;
     const progressPreview = previewFromValue(
-      data.output || data.query || data.prompt || data.message || [data.serverName, data.toolName, data.status].filter(Boolean).join(" ")
+      data.output || data.query || data.prompt || messagePreview || [data.serverName, data.toolName, data.status].filter(Boolean).join(" ")
     );
     parts.push(createRawPart(progressType, data));
     return {
@@ -813,6 +905,99 @@ function createNonContentEntry(objectItem, options) {
   };
 }
 
+function appendMessageEntries(entries, objectItem, options) {
+  const {
+    config,
+    toolUses,
+    itemType,
+    itemRawTimestamp,
+    itemTimestamp,
+    message,
+    hasMessageObject,
+    createAnchorId
+  } = options;
+  const content = message.content;
+
+  if (typeof content === "string") {
+    entries.push(createTextEntry(objectItem, [createTextPart(content)], options));
+    return;
+  }
+
+  if (!Array.isArray(content)) {
+    const nonContentEntry = createNonContentEntry(objectItem, {
+      itemType,
+      itemTimestamp,
+      message,
+      hasMessageObject,
+      createAnchorId,
+      contextBadge: options.contextBadge,
+      contextTitle: options.contextTitle,
+      navContextLabel: options.navContextLabel
+    });
+    if (nonContentEntry) {
+      entries.push(nonContentEntry);
+    }
+    return;
+  }
+
+  const textParts = [];
+  const flushTextParts = () => {
+    if (textParts.length === 0) {
+      return;
+    }
+
+    entries.push(createTextEntry(objectItem, textParts.splice(0), options));
+  };
+
+  for (const contentItem of content) {
+    if (!contentItem) {
+      continue;
+    }
+
+    if (contentItem.type === "text") {
+      textParts.push(createTextPart(contentItem.text));
+      continue;
+    }
+
+    if (contentItem.type === "thinking") {
+      flushTextParts();
+      entries.push(createThinkingEntry(contentItem, {
+        itemTimestamp,
+        createAnchorId,
+        contextBadge: options.contextBadge,
+        contextTitle: options.contextTitle,
+        navContextLabel: options.navContextLabel
+      }));
+      continue;
+    }
+
+    if (contentItem.type === "tool_result") {
+      flushTextParts();
+      const toolUseId = contentItem.tool_use_id || "";
+      const toolUse = toolUses[toolUseId] || {};
+      entries.push(createToolResultEntry(contentItem, toolUse, {
+        config,
+        createAnchorId,
+        itemRawTimestamp,
+        itemTimestamp,
+        contextBadge: options.contextBadge,
+        contextTitle: options.contextTitle,
+        navContextLabel: options.navContextLabel
+      }));
+      continue;
+    }
+
+    if (contentItem.type === "tool_use") {
+      continue;
+    }
+
+    flushTextParts();
+    entries.push(createUnknownContentEntry(objectItem, contentItem, options));
+  }
+
+  flushTextParts();
+}
+
 export function parseJsonLines(text) {
   const jsonLines = String(text || "").split("\n");
   const parsedObjects = [];
@@ -834,7 +1019,7 @@ export function parseJsonLines(text) {
 }
 
 export function collectToolUsesFromObject(objectItem, toolUses = {}, options = {}) {
-  const message = objectItem.message || {};
+  const message = isRecord(objectItem.message) ? objectItem.message : {};
   const content = message.content;
   if (!Array.isArray(content)) {
     return toolUses;
@@ -856,6 +1041,21 @@ export function collectToolUsesFromObject(objectItem, toolUses = {}, options = {
       input: contentItem.input || {}
     };
 
+    const contextBadge = toSingleLineText(options.contextBadge);
+    if (contextBadge) {
+      toolUses[contentItem.id].context_badge = contextBadge;
+    }
+
+    const contextTitle = toSingleLineText(options.contextTitle);
+    if (contextTitle) {
+      toolUses[contentItem.id].context_title = contextTitle;
+    }
+
+    const navContextLabel = toSingleLineText(options.navContextLabel);
+    if (navContextLabel) {
+      toolUses[contentItem.id].nav_context_label = navContextLabel;
+    }
+
     if (options.lineRef) {
       toolUses[contentItem.id].line_ref = options.lineRef;
     }
@@ -869,6 +1069,14 @@ export function collectToolUses(objects) {
 
   for (const objectItem of objects) {
     collectToolUsesFromObject(objectItem, toolUses);
+    const agentProgressMessage = getAgentProgressMessageObject(objectItem);
+    if (agentProgressMessage) {
+      collectToolUsesFromObject(
+        agentProgressMessage,
+        toolUses,
+        resolveAgentProgressContext(objectItem, toolUses)
+      );
+    }
   }
 
   return toolUses;
@@ -903,95 +1111,40 @@ export function buildEntries(objects, toolUses = {}, options = {}) {
       continue;
     }
 
+    const agentProgressMessage = getAgentProgressMessageObject(objectItem);
+    if (agentProgressMessage) {
+      const agentProgressRawTimestamp = String(agentProgressMessage.timestamp || objectItem.timestamp || "");
+      const hasAgentProgressMessageObject = isRecord(agentProgressMessage.message);
+      appendMessageEntries(entries, agentProgressMessage, {
+        config,
+        toolUses,
+        itemType: agentProgressMessage.type || "",
+        itemRawTimestamp: agentProgressRawTimestamp,
+        itemTimestamp: formatTimestamp(agentProgressRawTimestamp),
+        message: hasAgentProgressMessageObject ? agentProgressMessage.message : {},
+        hasMessageObject: hasAgentProgressMessageObject,
+        createAnchorId,
+        ...resolveAgentProgressContext(objectItem, toolUses)
+      });
+      continue;
+    }
+
     const hasMessageObject = Boolean(
       objectItem.message
       && typeof objectItem.message === "object"
       && !Array.isArray(objectItem.message)
     );
     const message = hasMessageObject ? objectItem.message : {};
-    const content = message.content;
-
-    if (typeof content === "string") {
-      entries.push(createTextEntry(objectItem, [createTextPart(content)], {
-        itemType,
-        itemTimestamp,
-        message,
-        createAnchorId
-      }));
-      continue;
-    }
-
-    if (!Array.isArray(content)) {
-      const nonContentEntry = createNonContentEntry(objectItem, {
-        itemType,
-        itemTimestamp,
-        message,
-        hasMessageObject,
-        createAnchorId
-      });
-      if (nonContentEntry) {
-        entries.push(nonContentEntry);
-      }
-      continue;
-    }
-
-    const textParts = [];
-    const flushTextParts = () => {
-      if (textParts.length === 0) {
-        return;
-      }
-
-      entries.push(createTextEntry(objectItem, textParts.splice(0), {
-        itemType,
-        itemTimestamp,
-        message,
-        createAnchorId
-      }));
-    };
-
-    for (const contentItem of content) {
-      if (!contentItem) {
-        continue;
-      }
-
-      if (contentItem.type === "text") {
-        textParts.push(createTextPart(contentItem.text));
-        continue;
-      }
-
-      if (contentItem.type === "thinking") {
-        flushTextParts();
-        entries.push(createThinkingEntry(contentItem, itemTimestamp, createAnchorId));
-        continue;
-      }
-
-      if (contentItem.type === "tool_result") {
-        flushTextParts();
-        const toolUseId = contentItem.tool_use_id || "";
-        const toolUse = toolUses[toolUseId] || {};
-        entries.push(createToolResultEntry(contentItem, toolUse, {
-          config,
-          createAnchorId,
-          itemRawTimestamp,
-          itemTimestamp
-        }));
-        continue;
-      }
-
-      if (contentItem.type === "tool_use") {
-        continue;
-      }
-
-      flushTextParts();
-      entries.push(createUnknownContentEntry(objectItem, contentItem, {
-        itemType,
-        itemTimestamp,
-        message,
-        createAnchorId
-      }));
-    }
-
-    flushTextParts();
+    appendMessageEntries(entries, objectItem, {
+      config,
+      toolUses,
+      itemType,
+      itemRawTimestamp,
+      itemTimestamp,
+      message,
+      hasMessageObject,
+      createAnchorId
+    });
   }
 
   return entries;

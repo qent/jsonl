@@ -1327,6 +1327,166 @@ test('top-level Claude Code service events render visible cards and filter hook 
   assert.equal(cards[9].children[1].children[1].textContent.includes('"future-event"'), true);
 });
 
+test('agent_progress prompt renders as a subagent text card with Agent navigation preview', async () => {
+  const api = createHarness();
+  const prompt = 'Find nested files and configs';
+  const jsonlObjects = [
+    {
+      type: 'progress',
+      timestamp: '2026-04-24T12:40:00Z',
+      data: {
+        type: 'agent_progress',
+        agentId: 'agent-a1234567890',
+        prompt,
+        message: {
+          type: 'user',
+          timestamp: '2026-04-24T12:40:00Z',
+          uuid: 'nested-user-1',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: prompt }]
+          }
+        }
+      },
+      toolUseID: 'agent_msg_1',
+      parentToolUseID: 'parent-agent-tool'
+    }
+  ];
+  const jsonl = jsonlObjects.map((objectItem) => JSON.stringify(objectItem)).join('\n');
+
+  await api.handleFiles([createFile('sample.jsonl', jsonl)]);
+
+  const navItems = getRenderedNavItems(api);
+  assert.equal(navItems.length, 1);
+  assert.equal(navItems[0].children[2].textContent, `Agent: ${prompt}`);
+  assert.equal(navItems[0].children[2].textContent.includes('[object Object]'), false);
+  assert.equal(navItems[0].children[2].children[0].tagName, 'STRONG');
+  assert.equal(navItems[0].children[2].children[0].textContent, 'Agent:');
+
+  const cards = getRenderedCards(api);
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].classList.contains('user'), true);
+  assert.equal(cards[0].children[0].children[0].textContent, 'user');
+  assert.equal(cards[0].children[0].children[1].textContent, 'Subagent');
+  assert.equal(cards[0].children[1].classList.contains('txt-block'), true);
+  assert.equal(cards[0].children[1].children[0].textContent, prompt);
+});
+
+test('agent_progress tool_use and tool_result render as subagent tool cards', async () => {
+  const api = createHarness();
+  const readPath = '/tmp/nested.txt';
+  const writePath = '/tmp/out.txt';
+  const jsonlObjects = [
+    {
+      type: 'progress',
+      timestamp: '2026-04-24T12:41:00Z',
+      data: {
+        type: 'agent_progress',
+        agentId: 'agent-a1234567890',
+        prompt: '',
+        message: {
+          type: 'assistant',
+          timestamp: '2026-04-24T12:41:00Z',
+          uuid: 'nested-assistant-1',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'tool_use', id: 'nested-read', name: 'Read', input: { file_path: readPath } }]
+          }
+        }
+      }
+    },
+    {
+      type: 'progress',
+      timestamp: '2026-04-24T12:41:02Z',
+      data: {
+        type: 'agent_progress',
+        agentId: 'agent-a1234567890',
+        prompt: '',
+        message: {
+          type: 'user',
+          timestamp: '2026-04-24T12:41:02Z',
+          uuid: 'nested-user-1',
+          message: {
+            role: 'user',
+            content: [{ type: 'tool_result', tool_use_id: 'nested-read', content: 'read result' }]
+          }
+        }
+      }
+    },
+    {
+      type: 'progress',
+      timestamp: '2026-04-24T12:41:03Z',
+      data: {
+        type: 'agent_progress',
+        agentId: 'agent-a1234567890',
+        prompt: '',
+        message: {
+          type: 'assistant',
+          timestamp: '2026-04-24T12:41:03Z',
+          uuid: 'nested-assistant-2',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'tool_use', id: 'nested-write', name: 'Write', input: { file_path: writePath } }]
+          }
+        }
+      }
+    },
+    {
+      type: 'progress',
+      timestamp: '2026-04-24T12:41:04Z',
+      data: {
+        type: 'agent_progress',
+        agentId: 'agent-a1234567890',
+        prompt: '',
+        message: {
+          type: 'user',
+          timestamp: '2026-04-24T12:41:04Z',
+          uuid: 'nested-user-2',
+          message: {
+            role: 'user',
+            content: [{ type: 'tool_result', tool_use_id: 'nested-write', content: 'permission denied', is_error: true }]
+          }
+        }
+      }
+    }
+  ];
+  const jsonl = jsonlObjects.map((objectItem) => JSON.stringify(objectItem)).join('\n');
+
+  await api.handleFiles([createFile('sample.jsonl', jsonl)]);
+
+  const navItems = getRenderedNavItems(api);
+  assert.deepEqual(
+    navItems.map((item) => item.children[2].textContent),
+    [
+      `Agent: Read: ${readPath}`,
+      'Agent: Write: permission denied'
+    ]
+  );
+  assert.equal(navItems[1].classList.contains('error'), true);
+  assert.equal(navItems[1].style.properties['--c'], 'var(--entry-error)');
+
+  const cards = getRenderedCards(api);
+  assert.equal(cards.length, 2);
+
+  assert.equal(cards[0].classList.contains('tool'), true);
+  assert.equal(cards[0].children[0].children[0].textContent, 'tool');
+  assert.equal(cards[0].children[0].children[1].textContent, 'Subagent');
+  assert.equal(cards[0].children[0].children[2].textContent, '2.0 s');
+  assert.equal(cards[0].children[1].children[0].textContent, 'Read');
+  assert.equal(findChildByClass(cards[0].children[1].children[0], 'summary-preview').textContent, ` ${readPath}`);
+  assert.equal(cards[0].children[2].children[0].textContent, '');
+  assert.equal(findChildByClass(cards[0].children[2].children[0], 'summary-preview').textContent, 'read result');
+
+  assert.equal(cards[1].classList.contains('tool'), true);
+  assert.equal(cards[1].children[0].children[1].textContent, 'Subagent');
+  assert.equal(cards[1].style.properties['--c'], 'var(--entry-error)');
+  assert.equal(cards[1].children[1].children[0].textContent, 'Write');
+  assert.equal(findChildByClass(cards[1].children[1].children[0], 'summary-preview').textContent, ` ${writePath}`);
+  const errorPreview = findChildByClass(cards[1].children[2].children[0], 'summary-preview');
+  assert.equal(errorPreview.textContent, 'permission denied');
+  assert.equal(errorPreview.classList.contains('summary-preview-error'), true);
+});
+
 test('unmatched tool_use renders a request-only tool card after full parse', async () => {
   const api = createHarness();
   const file = createStreamCapableFile('pending-tool.jsonl', JSON.stringify({

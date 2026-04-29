@@ -208,6 +208,17 @@ export function createRenderer(options) {
 
     meta.appendChild(badge);
 
+    if (entry.context_badge) {
+      const contextBadge = document.createElement("span");
+      contextBadge.className = "b context-badge";
+      contextBadge.textContent = entry.context_badge;
+      if (entry.context_title) {
+        contextBadge.title = entry.context_title;
+        contextBadge.setAttribute("aria-label", `${entry.context_badge}: ${entry.context_title}`);
+      }
+      meta.appendChild(contextBadge);
+    }
+
     if (entry.tool_duration_badge) {
       const toolDurationBadge = document.createElement("span");
       toolDurationBadge.className = "b tool-duration-badge";
@@ -461,6 +472,16 @@ export function createRenderer(options) {
       return [{ text: "", bold: false }];
     }
 
+    if (entry.nav_context_label) {
+      const contextPrefix = `${entry.nav_context_label}:`;
+      if (labelText.startsWith(contextPrefix)) {
+        return [
+          { text: contextPrefix, bold: true },
+          { text: labelText.slice(contextPrefix.length), bold: false }
+        ];
+      }
+    }
+
     if (entry.type === "tool" && entry.nav_label_variant === "bash-success") {
       return [{ text: labelText, bold: false }];
     }
@@ -549,7 +570,11 @@ export function createRenderer(options) {
     if (entry.nav_label_variant === "bash-success") {
       text.classList.add("nav-text-terminal");
     }
-    const navLabel = String(entry.nav_label || getTypeLabel(entry.type));
+    const entryNavLabel = String(entry.nav_label || getTypeLabel(entry.type));
+    const navContextLabel = toSingleLineText(entry.nav_context_label || "");
+    const navLabel = navContextLabel
+      ? `${navContextLabel}: ${entryNavLabel}`
+      : entryNavLabel;
     renderNavLabel(text, entry, navLabel);
 
     button.appendChild(navTime);
